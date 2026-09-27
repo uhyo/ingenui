@@ -437,6 +437,16 @@ describe("formatPromptContract", () => {
     expect(contract).toContain("- <Note>\n  A short aside.");
   });
 
+  it("describes text semantics the parser actually implements", () => {
+    const contract = formatPromptContract();
+    expect(contract).toContain("HTML\n  entities (&amp;, &lt;, &#123;, …) are decoded");
+    expect(contract).not.toContain("rendered literally");
+    // The escapes the contract recommends really produce a literal < and {.
+    expect(toHtml('<p>a &amp; b: &lt;b&gt; &#123;x&#125; {"<"}</p>')).toBe(
+      "<p>a &amp; b: &lt;b&gt; {x} &lt;</p>",
+    );
+  });
+
   it("lists the list-form allowlist as a closed set", () => {
     const contract = formatPromptContract({ elements: ["div", "p"] });
     expect(contract).toContain("- <div>\n- <p>\n- Never use an element outside this list.");
