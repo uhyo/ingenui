@@ -4,7 +4,11 @@
  * schema, and renderer can all import it without cycles.
  */
 
-/** A node in the renderer-independent AST. */
+/**
+ * A node in the renderer-independent AST. Nodes are immutable: a snapshot
+ * never changes once handed out, and a closed node is frozen and keeps its
+ * identity across snapshots (see `TreeBuilder`).
+ */
 export type Node =
   | ElementNode
   | FragmentNode
@@ -14,31 +18,31 @@ export type Node =
   | PendingNode;
 
 export interface ElementNode {
-  kind: "element";
-  id: number;
-  tag: string;
-  props: Record<string, PropValue>;
-  children: Node[];
-  status: "open" | "closed";
+  readonly kind: "element";
+  readonly id: number;
+  readonly tag: string;
+  readonly props: Readonly<Record<string, PropValue>>;
+  readonly children: readonly Node[];
+  readonly status: "open" | "closed";
 }
 
 export interface FragmentNode {
-  kind: "fragment";
-  id: number;
-  children: Node[];
-  status: "open" | "closed";
+  readonly kind: "fragment";
+  readonly id: number;
+  readonly children: readonly Node[];
+  readonly status: "open" | "closed";
 }
 
 export interface TextNode {
-  kind: "text";
-  id: number;
-  value: string;
+  readonly kind: "text";
+  readonly id: number;
+  readonly value: string;
 }
 
 export interface ExpressionNode {
-  kind: "expression";
-  id: number;
-  value: unknown;
+  readonly kind: "expression";
+  readonly id: number;
+  readonly value: unknown;
 }
 
 /**
@@ -49,10 +53,10 @@ export interface ExpressionNode {
  * position).
  */
 export interface VariableNode {
-  kind: "variable";
-  id: number;
+  readonly kind: "variable";
+  readonly id: number;
   /** Root identifier followed by its member accesses (`a.b.c` → `["a","b","c"]`). */
-  path: readonly string[];
+  readonly path: readonly string[];
 }
 
 /**
@@ -61,8 +65,8 @@ export interface VariableNode {
  * once the stream ends. The React adapter renders it as `<Pending />`.
  */
 export interface PendingNode {
-  kind: "pending";
-  id: number;
+  readonly kind: "pending";
+  readonly id: number;
 }
 
 /** A resolved prop value (string literal, expression literal, or nested node). */

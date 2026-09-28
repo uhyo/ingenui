@@ -11,7 +11,7 @@
 import type { ReactNode } from "react";
 
 import type { JsxErrorEvent, MismatchBehavior, Node } from "./core";
-import { checkProp, createParser, isElementAllowed, resolveVariableType } from "./core";
+import { createParser, createSchemaChecks } from "./core";
 import { createRenderer, resolveComponent, type RenderOptions } from "./render";
 import type { JsxStreamSource } from "./stream";
 import { pumpStream } from "./stream";
@@ -64,9 +64,9 @@ export interface IncrementalJsxParserOptions extends RenderOptions {
   /**
    * The channel for **recoverable** errors: unified structured JSX-level
    * events (mismatched/unclosed tags, unknown components, unsupported
-   * expressions, schema violations), fired synchronously **as soon as each
-   * error is parsed** — before any render, and in every recovery/rendering
-   * mode. Each event carries a `location` (line/column + the offending line's
+   * expressions, schema violations), fired synchronously **by the parse of
+   * the chunk that completes each error** — before any render, and in every
+   * recovery/rendering mode. Each event carries a `location` (line/column + the offending line's
    * text); `formatJsxError` renders it as a ready-to-log report.
    */
   onJsxError?: ((event: JsxErrorEvent) => void) | undefined;
@@ -105,14 +105,11 @@ export function createIncrementalJsxParser(
   source: JsxStreamSource,
   options: IncrementalJsxParserOptions = {},
 ): IncrementalJsxParser {
-  // The probes only run when `onJsxError` is set.
+  // The checks only run when `onJsxError` is set.
   const core = createParser({
     mismatchedTag: options.mismatchedTag,
     onJsxError: options.onJsxError,
-    isKnownComponent: (tag) => resolveComponent(options, tag) !== undefined,
-    isKnownVariable: (path) => resolveVariableType(options, path) !== undefined,
-    isAllowedElement: (tag) => isElementAllowed(options.elements, tag),
-    checkProp: (tag, prop, value) => checkProp(tag, prop, value, options),
+    checks: createSchemaChecks(options, (tag) => resolveComponent(options, tag) !== undefined),
   });
   const renderer = createRenderer(options);
 

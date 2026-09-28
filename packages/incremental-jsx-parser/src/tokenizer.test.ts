@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { Tokenizer, type Pending, type SourceLocation, type Token } from "./tokenizer";
+import type { SourceLocation } from "./position";
+import { Tokenizer, type Pending, type Token } from "./tokenizer";
 
 /** Tokenize `input` split into chunks of the given sizes, collecting all tokens. */
 function tokenize(input: string, chunkSizes?: number[]): Token[] {

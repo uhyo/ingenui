@@ -12,12 +12,7 @@
  */
 
 import type { Parser, SchemaOptions } from "@ingenui/incremental-jsx-parser/core";
-import {
-  checkProp,
-  createParser,
-  isElementAllowed,
-  resolveVariableType,
-} from "@ingenui/incremental-jsx-parser/core";
+import { createParser, createSchemaChecks } from "@ingenui/incremental-jsx-parser/core";
 
 import { withActionsVariable } from "./actions";
 import type { GenUiIssue, IssueListener } from "./issues";
@@ -71,8 +66,9 @@ export function createGenUiValidator(
   schema: GenUiSchema,
   options: GenUiValidatorOptions = {},
 ): GenUiValidator {
-  const schemaOptions: SchemaOptions = schemaParserOptions(schema);
-  const components = schemaOptions.components ?? {};
+  // The same canonical checks the client's parser runs (with the schema's
+  // component catalog standing in for the real components).
+  const checks = createSchemaChecks(schemaParserOptions(schema));
 
   const issues: GenUiIssue[] = [];
   const record = (issue: GenUiIssue): void => {
@@ -88,15 +84,11 @@ export function createGenUiValidator(
     markdownTail() {},
     openUi() {
       const blockIndex = blockCount++;
-      // Mirrors the client parser's wiring (createIncrementalJsxParser), with
-      // the component catalog being the schema's.
+      // Mirrors the client parser's wiring (createIncrementalJsxParser).
       current = createParser({
         mismatchedTag: schema.mismatchedTag,
         onJsxError: (event) => record({ kind: "jsx-error", blockIndex, event }),
-        isKnownComponent: (tag) => Object.hasOwn(components, tag),
-        isKnownVariable: (path) => resolveVariableType(schemaOptions, path) !== undefined,
-        isAllowedElement: (tag) => isElementAllowed(schemaOptions.elements, tag),
-        checkProp: (tag, prop, value) => checkProp(tag, prop, value, schemaOptions),
+        checks,
       });
     },
     ui(text) {

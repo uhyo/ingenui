@@ -2,7 +2,13 @@ import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { createParser, formatJsxError, type JsxErrorEvent, type ParserOptions } from "./core";
+import {
+  createParser,
+  formatJsxError,
+  type JsxErrorEvent,
+  type ParserOptions,
+  type SchemaChecks,
+} from "./core";
 import { createIncrementalJsxParser } from "./index";
 import { createRenderer } from "./render";
 import { Tokenizer } from "./tokenizer";
@@ -17,9 +23,9 @@ function html(
 ): string {
   const tk = new Tokenizer();
   const tb = new TreeBuilder({ mismatchedTag: opts.mismatchedTag });
-  for (const token of tk.write(input)) tb.push(token);
+  tb.push(tk.write(input));
   if (opts.end ?? true) {
-    for (const token of tk.end()) tb.push(token);
+    tb.push(tk.end());
     tb.end();
   }
   const r = createRenderer({});
@@ -69,15 +75,33 @@ describe("Error handling — truncated input", () => {
   });
 });
 
+type TestOptions = Omit<ParserOptions, "onJsxError" | "checks"> & Partial<SchemaChecks>;
+
+/** Parser options with the given schema checks; the rest accept everything. */
+function parserOptions(
+  { mismatchedTag, ...checks }: TestOptions,
+  onJsxError: (event: JsxErrorEvent) => void,
+): ParserOptions {
+  return {
+    mismatchedTag,
+    onJsxError,
+    checks: {
+      isKnownComponent: () => true,
+      isKnownVariable: () => true,
+      isAllowedElement: () => true,
+      checkProp: () => null,
+      ...checks,
+    },
+  };
+}
+
 /** Run `input` through the core parser, collecting unified error events. */
-function collectEvents(
-  input: string,
-  opts: Omit<ParserOptions, "onJsxError"> & { end?: boolean } = {},
-): JsxErrorEvent[] {
+function collectEvents(input: string, opts: TestOptions & { end?: boolean } = {}): JsxErrorEvent[] {
   const events: JsxErrorEvent[] = [];
-  const p = createParser({ ...opts, onJsxError: (e) => events.push(e) });
+  const { end = true, ...rest } = opts;
+  const p = createParser(parserOptions(rest, (e) => events.push(e)));
   p.write(input);
-  if (opts.end ?? true) p.end();
+  if (end) p.end();
   // Note: getTree() is never called — events must not depend on rendering.
   return events;
 }
@@ -98,18 +122,16 @@ describe("Unified JSX error events (onJsxError)", () => {
   });
 
   it("keeps recovery behavior unchanged while reporting", () => {
-    const onJsxError = vi.fn();
     const tk = new Tokenizer();
-    const tb = new TreeBuilder({ onJsxError });
-    for (const token of tk.write("<a><b>x</a>")) tb.push(token);
-    tb.end();
+    const tb = new TreeBuilder();
+    const errors = [...tb.push(tk.write("<a><b>x</a>")), ...tb.end()];
     const r = createRenderer({});
     const markup = renderToStaticMarkup(
       createElement(Fragment, null, r.render(tb.snapshot(tk.getPending()))),
     );
     expect(markup).toBe("<a><b>x</b></a>");
-    expect(onJsxError).toHaveBeenCalledOnce();
-    expect(onJsxError.mock.calls[0]![0]).toMatchObject({
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
       kind: "mismatched-tag",
       message: "Mismatched closing tag </a>; expected </b>",
       tag: "a",
@@ -308,7 +330,7 @@ describe("Error locations (line / column / lineText)", () => {
     ]);
     for (let i = 1; i < input.length; i++) {
       const events: JsxErrorEvent[] = [];
-      const p = createParser({ ...opts, onJsxError: (e) => events.push(e) });
+      const p = createParser(parserOptions(opts, (e) => events.push(e)));
       p.write(input.slice(0, i));
       p.write(input.slice(i));
       p.end();

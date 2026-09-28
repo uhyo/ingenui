@@ -11,9 +11,9 @@ import { TreeBuilder } from "./tree-builder";
 function build(input: string, opts?: { end?: boolean }): readonly Node[] {
   const tk = new Tokenizer();
   const tb = new TreeBuilder();
-  for (const token of tk.write(input)) tb.push(token);
+  tb.push(tk.write(input));
   if (opts?.end) {
-    for (const token of tk.end()) tb.push(token);
+    tb.push(tk.end());
     tb.end();
   }
   return tb.snapshot(tk.getPending());
@@ -110,7 +110,7 @@ describe("React adapter — keys & memoization", () => {
     const tk = new Tokenizer();
     const tb = new TreeBuilder();
     const feed = (s: string) => {
-      for (const token of tk.write(s)) tb.push(token);
+      tb.push(tk.write(s));
     };
     const r = createRenderer();
 

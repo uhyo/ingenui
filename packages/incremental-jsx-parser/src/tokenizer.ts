@@ -7,14 +7,10 @@
  * (PLAN.md §5) is that the emitted token stream does not depend on how the
  * input is split into chunks.
  *
- * Text matches real JSX parser semantics (Babel/TypeScript), applied
- * incrementally:
- *  - HTML character references (`&amp;`, `&#x1F600;`, …) are decoded in text
- *    and in string attribute values; invalid ones stay verbatim.
- *  - JSX whitespace rules: tabs become spaces, indentation and trailing
- *    whitespace around line breaks are dropped, a line break inside text
- *    collapses to a single joining space, and a whitespace-only run that
- *    contains a line break produces no text at all.
+ * Two concerns live in their own modules so this one is only the lexing state
+ * machine: child text is normalized to real JSX semantics (entities,
+ * whitespace) by a {@link TextRun}, and source positions are tracked by the
+ * {@link PositionTracker} base class.
  *
  * {@link Tokenizer.getPending} describes the half-read construct at the
  * cursor. Only partial *text* is renderable; a partial tag/attribute
@@ -24,28 +20,10 @@
  * text until they resolve.
  */
 
-import { decodeEntities, decodeEntity, MAX_ENTITY_LENGTH } from "./entities";
-
-/**
- * A location in the streamed source, attached to the tokens (and, through
- * them, the `JsxErrorEvent`s) that can anchor an error message.
- *
- * `column` and `offset` count UTF-16 code units, matching JavaScript string
- * indexing. `lineText` is the content of the source line as far as it had
- * streamed when the construct completed — for a single-line construct that is
- * the whole line up to and including it; the tail of the line may not have
- * arrived yet. Very long lines are truncated at {@link MAX_LINE_TEXT}.
- */
-export interface SourceLocation {
-  /** 1-based line number. */
-  line: number;
-  /** 1-based column (UTF-16 code units). */
-  column: number;
-  /** 0-based offset from the start of the stream (UTF-16 code units). */
-  offset: number;
-  /** Content of the line, as streamed so far when captured (no newline). */
-  lineText: string;
-}
+import { decodeEntities } from "./entities";
+import { PositionTracker } from "./position";
+import type { Mark, SourceLocation } from "./position";
+import { TextRun } from "./text-run";
 
 export type AttrValue =
   | { type: "string"; value: string }
@@ -102,53 +80,15 @@ function isNameChar(ch: string): boolean {
   return isNameStart(ch) || (ch >= "0" && ch <= "9") || ch === "-" || ch === ".";
 }
 
-/** Cap on retained per-line context, so a pathological single line stays bounded. */
-const MAX_LINE_TEXT = 500;
-
-/**
- * Whether `ch` can extend a buffered character reference: `#` right after the
- * `&`, then alphanumerics (which covers the `x` of hex references).
- */
-function isEntityBodyChar(ch: string, buf: string): boolean {
-  if (ch === "#") return buf === "&";
-  return (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9");
-}
-
-/**
- * The recorded start of a construct (`<` of a tag, `{` of an expression).
- * `lineText` stays `null` while the anchor's line is still streaming and is
- * snapshotted when the line ends, so a construct spanning lines still reports
- * its *starting* line.
- */
-interface Anchor {
-  line: number;
-  column: number;
-  offset: number;
-  lineText: string | null;
-}
-
 /**
  * A resumable JSX tokenizer. Feed chunks with {@link write}, signal the end of
  * the stream with {@link end}, and read the current frontier with
  * {@link getPending}.
  */
-export class Tokenizer {
+export class Tokenizer extends PositionTracker {
   private state: State = State.Text;
-  /** Child text so far: entity-decoded and whitespace-normalized. */
-  private text = "";
-  /**
-   * Whitespace seen since the last text character, not yet committed: kept if
-   * more text follows on the same line, dropped if a line break follows.
-   */
-  private textWs = "";
-  /**
-   * A line break has been seen since the last text character: further
-   * whitespace is indentation (dropped) and the next text character joins
-   * with a single space.
-   */
-  private textNewline = false;
-  /** A possible character reference being buffered, starting with its `&`. */
-  private entityBuf = "";
+  /** The child text run being accumulated (in {@link State.Text}). */
+  private readonly text = new TextRun();
   /** Tag name (open or close). */
   private name = "";
   private attrName = "";
@@ -157,14 +97,8 @@ export class Tokenizer {
   /** Re-process the current character in the new state. */
   private reconsume = false;
 
-  // Position of the character currently being processed.
-  private line = 1;
-  private column = 1;
-  private offset = 0;
-  /** Content of the current line so far (capped at {@link MAX_LINE_TEXT}). */
-  private lineText = "";
-  private tagAnchor: Anchor | null = null;
-  private exprAnchor: Anchor | null = null;
+  private tagMark: Mark | null = null;
+  private exprMark: Mark | null = null;
 
   // Expression container (`{ ... }`) scanning state.
   /** Raw source between the outer braces. */
@@ -181,23 +115,11 @@ export class Tokenizer {
   write(chunk: string): Token[] {
     const out: Token[] = [];
     for (const ch of chunk) {
-      // Append before processing, so a token emitted on a delimiter (`>`, `}`)
-      // captures a `lineText` that contains the whole construct.
-      if (ch !== "\n" && ch !== "\r" && this.lineText.length < MAX_LINE_TEXT) {
-        this.lineText += ch;
-      }
+      this.advance(ch);
       do {
         this.reconsume = false;
         this.step(ch, out);
       } while (this.reconsume);
-      this.offset += ch.length;
-      if (ch === "\n") {
-        this.finishLine();
-        this.line++;
-        this.column = 1;
-      } else {
-        this.column += ch.length;
-      }
     }
     return out;
   }
@@ -214,33 +136,16 @@ export class Tokenizer {
 
   /** The half-read construct at the cursor (PLAN.md §1). */
   getPending(): Pending {
-    if (this.state === State.Text && this.text.length > 0) {
-      return { type: "text", value: this.text };
+    if (this.state === State.Text) {
+      const value = this.text.pending();
+      if (value.length > 0) return { type: "text", value };
     }
     return { type: "none" };
   }
 
-  /** Snapshot the completed line into any anchor still waiting for it. */
-  private finishLine(): void {
-    for (const anchor of [this.tagAnchor, this.exprAnchor]) {
-      if (anchor && anchor.lineText === null) anchor.lineText = this.lineText;
-    }
-    this.lineText = "";
-  }
-
-  private anchorHere(): Anchor {
-    return { line: this.line, column: this.column, offset: this.offset, lineText: null };
-  }
-
-  /** The location of `anchor`, or of the cursor when there is none. */
-  private location(anchor: Anchor | null = null): SourceLocation {
-    const { line, column, offset, lineText } = anchor ?? this.anchorHere();
-    return { line, column, offset, lineText: lineText ?? this.lineText };
-  }
-
   private takeTagLoc(): SourceLocation {
-    const loc = this.location(this.tagAnchor);
-    this.tagAnchor = null;
+    const loc = this.location(this.tagMark!);
+    this.tagMark = null;
     return loc;
   }
 
@@ -258,29 +163,15 @@ export class Tokenizer {
   private step(ch: string, out: Token[]): void {
     switch (this.state) {
       case State.Text: {
-        if (this.entityBuf !== "") {
-          if (ch === ";") {
-            this.resolveEntity();
-            return;
-          }
-          if (this.entityBuf.length < MAX_ENTITY_LENGTH && isEntityBodyChar(ch, this.entityBuf)) {
-            this.entityBuf += ch;
-            return;
-          }
-          // Not a reference after all: keep it verbatim, then handle `ch`.
-          this.flushEntityLiteral();
-        }
         if (ch === "<") {
           this.flushText(out);
-          this.tagAnchor = this.anchorHere();
+          this.tagMark = this.mark();
           this.state = State.TagOpen;
         } else if (ch === "{") {
           this.flushText(out);
           this.startExpression(false);
-        } else if (ch === "&") {
-          this.entityBuf = "&";
         } else {
-          this.appendText(ch);
+          this.text.push(ch);
         }
         return;
       }
@@ -291,7 +182,7 @@ export class Tokenizer {
           this.state = State.CloseTagName;
         } else if (ch === ">") {
           out.push({ type: "openTagStart", name: "", loc: this.takeTagLoc() });
-          out.push({ type: "openTagEnd", loc: this.location() });
+          out.push({ type: "openTagEnd", loc: this.here() });
           this.state = State.Text;
         } else if (isNameStart(ch)) {
           this.name = ch;
@@ -315,7 +206,7 @@ export class Tokenizer {
 
       case State.BeforeAttrName: {
         if (ch === ">") {
-          out.push({ type: "openTagEnd", loc: this.location() });
+          out.push({ type: "openTagEnd", loc: this.here() });
           this.state = State.Text;
         } else if (ch === "/") {
           this.state = State.SelfClose;
@@ -377,7 +268,7 @@ export class Tokenizer {
 
       case State.SelfClose: {
         if (ch === ">") {
-          out.push({ type: "selfClose", loc: this.location() });
+          out.push({ type: "selfClose", loc: this.here() });
           this.state = State.Text;
         }
         return;
@@ -420,62 +311,13 @@ export class Tokenizer {
     }
   }
 
-  /**
-   * Append one already-decoded character to the text run, applying the JSX
-   * whitespace rules incrementally (see the module doc).
-   */
-  private appendText(ch: string): void {
-    if (ch === "\n" || ch === "\r") {
-      // Whitespace before a line break is line-trailing: dropped.
-      this.textWs = "";
-      this.textNewline = true;
-      return;
-    }
-    if (ch === " " || ch === "\t") {
-      if (!this.textNewline) this.textWs += " ";
-      return;
-    }
-    if (this.textNewline) {
-      if (this.text.length > 0) this.text += " ";
-      this.textNewline = false;
-    } else {
-      this.text += this.textWs;
-    }
-    this.textWs = "";
-    this.text += ch;
-  }
-
-  private appendDecoded(value: string): void {
-    for (const ch of value) this.appendText(ch);
-  }
-
-  private flushEntityLiteral(): void {
-    this.appendDecoded(this.entityBuf);
-    this.entityBuf = "";
-  }
-
-  /** A `;` arrived: decode the buffered reference, or keep it verbatim. */
-  private resolveEntity(): void {
-    const decoded = decodeEntity(this.entityBuf.slice(1));
-    this.appendDecoded(decoded ?? this.entityBuf + ";");
-    this.entityBuf = "";
-  }
-
   private flushText(out: Token[]): void {
-    if (this.entityBuf !== "") this.flushEntityLiteral();
-    // Whitespace at the end of the run's last line is kept; anything parked
-    // after a line break is dropped.
-    if (!this.textNewline) this.text += this.textWs;
-    this.textWs = "";
-    this.textNewline = false;
-    if (this.text.length > 0) {
-      out.push({ type: "text", value: this.text });
-      this.text = "";
-    }
+    const value = this.text.take();
+    if (value.length > 0) out.push({ type: "text", value });
   }
 
   private startExpression(isAttr: boolean): void {
-    this.exprAnchor = this.anchorHere();
+    this.exprMark = this.mark();
     this.exprRaw = "";
     this.exprDepth = 1;
     this.exprQuote = "";
@@ -485,8 +327,8 @@ export class Tokenizer {
   }
 
   private finishExpression(out: Token[]): void {
-    const loc = this.location(this.exprAnchor);
-    this.exprAnchor = null;
+    const loc = this.location(this.exprMark!);
+    this.exprMark = null;
     if (this.exprIsAttr) {
       this.emitAttribute(out, { type: "expression", raw: this.exprRaw, loc });
       this.state = State.BeforeAttrName;

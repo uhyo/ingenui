@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveVariablePath, UNSUPPORTED_EXPRESSION, type Node } from "./core";
 import { parseExpression } from "./expression";
 import { createRenderer, type RenderOptions } from "./render";
-import { Tokenizer, type SourceLocation, type Token } from "./tokenizer";
+import type { SourceLocation } from "./position";
+import { Tokenizer, type Token } from "./tokenizer";
 import { TreeBuilder } from "./tree-builder";
 
 /** Tokenize `input`, stripping source locations for shape-only assertions. */
@@ -24,8 +25,8 @@ function tokenize(input: string): unknown[] {
 function build(input: string): readonly Node[] {
   const tk = new Tokenizer();
   const tb = new TreeBuilder();
-  for (const token of tk.write(input)) tb.push(token);
-  for (const token of tk.end()) tb.push(token);
+  tb.push(tk.write(input));
+  tb.push(tk.end());
   tb.end();
   return tb.snapshot({ type: "none" });
 }

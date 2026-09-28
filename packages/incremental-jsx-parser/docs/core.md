@@ -17,12 +17,19 @@ core.subscribe(listener);
 core.end(); // finalize; drops the Pending frontier
 ```
 
-`createParser` accepts `mismatchedTag` and `onJsxError` like the React
-adapter (see [error handling](./errors.md)). Since the core knows nothing
-about React components or your data, the parse-time validation events are
-opt-in through callbacks:
+The AST is immutable: the node types are `readonly`, a snapshot never
+changes once returned, and a closed node is frozen and keeps its identity
+across snapshots, so consumers can memoize on it.
 
-| Option             | Signature                                   | Enables                  |
+`createParser` accepts `mismatchedTag` and `onJsxError` like the React
+adapter (see [error handling](./errors.md)). Each `write()` / `end()` reports
+the errors it completed, in source order, before notifying subscribers.
+
+Since the core knows nothing about React components or your data, the
+parse-time **schema** errors are opt-in through `checks`, a `SchemaChecks`
+object (only consulted when `onJsxError` is set):
+
+| Check              | Signature                                   | Enables                  |
 | ------------------ | ------------------------------------------- | ------------------------ |
 | `isKnownComponent` | `(tag: string) => boolean`                  | `"unknown-component"`    |
 | `isKnownVariable`  | `(path: readonly string[]) => boolean`      | `"unknown-variable"`     |
@@ -32,12 +39,25 @@ opt-in through callbacks:
 `isKnownVariable` receives the full dot path, so you can validate the root
 name only (`path[0]`) or every segment.
 
+Build them from a schema with `createSchemaChecks` — the canonical wiring the
+React adapter uses too, so the same text and schema yield the same errors:
+
+```ts
+import { createParser, createSchemaChecks } from "@ingenui/incremental-jsx-parser/core";
+
+const core = createParser({
+  onJsxError: (event) => log(event),
+  // The component catalog defaults to the keys of `components`; pass your
+  // own lookup as the second argument.
+  checks: createSchemaChecks({ elements, components, variables, variableTypes }),
+});
+```
+
 ## Helpers
 
-The canonical checks are exported here (they are React-free) — wire them
-into the callbacks above, and apply the same helpers in your renderer so
-reporting and enforcement agree (that is exactly what the React adapter
-does):
+The canonical checks are exported here (they are React-free) — they back
+`createSchemaChecks`; apply the same helpers in your renderer so reporting
+and enforcement agree (that is exactly what the React adapter does):
 
 - `isElementAllowed(elements, tag)` — the `elements` allowlist check.
 - `checkProp(tag, prop, value, { elements, components, variables, variableTypes })`
@@ -51,6 +71,10 @@ does):
   and leaves resolving them to the consumer; the React adapter uses this
   helper for both parse-time validation and render-time resolution, so the
   two always agree.
+- `validateOpeningTag(tag, props, location, checks)` /
+  `validateVariable(path, location, checks)` — the pure functions turning a
+  parsed construct into its schema errors (what the parser runs on every
+  opening tag and variable reference).
 - `formatPromptContract(schema)` — see
   [the schema as a prompt contract](./schema.md#the-schema-as-a-prompt-contract-formatpromptcontract).
 

@@ -8,9 +8,9 @@ import { TreeBuilder } from "./tree-builder";
 function build(input: string, opts?: { end?: boolean }): readonly Node[] {
   const tk = new Tokenizer();
   const tb = new TreeBuilder();
-  for (const token of tk.write(input)) tb.push(token);
+  tb.push(tk.write(input));
   if (opts?.end) {
-    for (const token of tk.end()) tb.push(token);
+    tb.push(tk.end());
     tb.end();
   }
   return tb.snapshot(tk.getPending());
@@ -99,7 +99,7 @@ describe("TreeBuilder — incrementality", () => {
     const tb = new TreeBuilder();
 
     const feed = (s: string) => {
-      for (const token of tk.write(s)) tb.push(token);
+      tb.push(tk.write(s));
     };
 
     feed("<div><span>a</span>");
@@ -134,7 +134,7 @@ describe("TreeBuilder — incrementality", () => {
     const tk = new Tokenizer();
     const tb = new TreeBuilder();
     const feed = (s: string) => {
-      for (const token of tk.write(s)) tb.push(token);
+      tb.push(tk.write(s));
     };
 
     feed("<p>Hel");
@@ -147,5 +147,65 @@ describe("TreeBuilder — incrementality", () => {
     const committed = (tb.snapshot(tk.getPending())[0] as ElementNode).children[0] as Node;
     expect(committed.kind).toBe("text");
     expect(committed.id).toBe(id1);
+  });
+});
+
+describe("TreeBuilder — purity", () => {
+  it("snapshot() is a pure read: calling it does not affect the ids assigned", () => {
+    const input = "<p>Hello <b>world</b> and {x}</p>";
+    const withSnapshots = (() => {
+      const tk = new Tokenizer();
+      const tb = new TreeBuilder();
+      for (const ch of input) {
+        tb.push(tk.write(ch));
+        tb.snapshot(tk.getPending());
+        tb.snapshot(tk.getPending());
+      }
+      tb.push(tk.end());
+      tb.end();
+      return tb.snapshot({ type: "none" });
+    })();
+    expect(withSnapshots).toEqual(build(input, { end: true }));
+  });
+
+  it("never changes a node it handed out", () => {
+    const tk = new Tokenizer();
+    const tb = new TreeBuilder();
+    tb.push(tk.write("<div><p>a"));
+    const before = tb.snapshot(tk.getPending());
+    const json = JSON.stringify(before);
+    tb.push(tk.write("b</p><p>c</p>"));
+    tb.push(tk.end());
+    tb.end();
+    expect(JSON.stringify(before)).toBe(json);
+    const after = tb.snapshot({ type: "none" });
+    expect(Object.isFrozen(after)).toBe(true);
+    expect(Object.isFrozen((after[0] as ElementNode).children)).toBe(true);
+  });
+
+  it("returns the errors each call produced instead of calling a listener", () => {
+    const tk = new Tokenizer();
+    const tb = new TreeBuilder({
+      checks: {
+        isKnownComponent: () => false,
+        isKnownVariable: () => true,
+        isAllowedElement: () => true,
+        checkProp: () => null,
+      },
+    });
+    expect(tb.push(tk.write("<a>"))).toEqual([]);
+    expect(tb.push(tk.write("<Nope/></b>")).map((e) => e.kind)).toEqual([
+      "unknown-component",
+      "mismatched-tag",
+    ]);
+    expect(tb.end().map((e) => e.kind)).toEqual([]);
+  });
+
+  it("reports unclosed tags from end(), innermost first", () => {
+    const tk = new Tokenizer();
+    const tb = new TreeBuilder();
+    tb.push(tk.write("<a><>x"));
+    tb.push(tk.end());
+    expect(tb.end().map((e) => e.kind === "unclosed-tag" && e.tag)).toEqual(["", "a"]);
   });
 });

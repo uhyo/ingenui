@@ -12,28 +12,44 @@
  * `useSyncExternalStore` — plus the feedback surface: every parse error,
  * render crash, and unclosed fence is collected as a {@link GenUiIssue}, and
  * `getIssueReport()` turns them into the text to send back to the model.
+ *
+ * Three layers, kept apart:
+ *  - **model** — the message's regions, a value derived from the splitter's
+ *    reports (collected per chunk as events) by a pure reducer
+ *    (`message-model.ts`);
+ *  - **runtime** — one parser per `ui+jsx` block (`ui-block.tsx`), fed by
+ *    the same events (a block's text merged into one write per chunk);
+ *  - **view** — {@link renderMessage}, a function of the model and the
+ *    blocks, with per-region Markdown memoization.
+ *
+ * This module is the imperative shell tying them to the stream and the store.
  */
 
 import { Fragment } from "react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 import type {
   IncrementalJsxParser,
   IncrementalJsxParserOptions,
 } from "@ingenui/incremental-jsx-parser";
-import { createIncrementalJsxParser } from "@ingenui/incremental-jsx-parser";
 import type { JsxStreamSource } from "@ingenui/incremental-jsx-parser/core";
 import { pumpStream } from "@ingenui/incremental-jsx-parser/core";
 
 import type { ActionEvent, ActionsDefinition } from "./actions";
 import { withActionsVariable } from "./actions";
-import { UiBlockErrorBoundary } from "./boundary";
-import type { PushChannel } from "./channel";
-import { createPushChannel } from "./channel";
 import type { GenUiIssue } from "./issues";
-import { describeError, formatIssueReport } from "./issues";
+import { formatIssueReport } from "./issues";
 import { renderMarkdown as renderMarkdownDefault } from "./markdown";
+import type { MarkdownRegion, MessageModel, SplitEvent } from "./message-model";
+import {
+  applySplitEvents,
+  createSplitEventCollector,
+  EMPTY_MESSAGE,
+  endMessage,
+} from "./message-model";
 import { createFenceSplitter } from "./splitter";
+import type { UiBlock } from "./ui-block";
+import { createUiBlock } from "./ui-block";
 
 /** Passed to a custom {@link GenUiMessageOptions.renderMarkdown}. */
 export interface MarkdownRenderContext {
@@ -111,28 +127,61 @@ export interface GenUiMessage extends IncrementalJsxParser {
   getIssueReport(): string | null;
 }
 
-interface MarkdownSegment {
-  kind: "markdown";
-  /** Stable id (creation order) used as the React key. */
-  id: number;
-  committed: string;
-  tail: string;
-  cachedFor?: string;
-  cachedStreaming?: boolean;
-  cachedNode?: ReactNode;
+/** How {@link renderMessage} renders each part of a message. */
+interface MessageView {
+  /** A markdown region; `streaming` when it holds the stream's frontier. */
+  markdown(region: MarkdownRegion, streaming: boolean): ReactNode;
+  /** The fallback for a crashed `ui+jsx` block. */
+  uiError(blockIndex: number): ReactNode;
+  /** The frontier placeholder shown after a streaming markdown region. */
+  Pending: ComponentType<unknown> | undefined;
 }
 
-interface UiSegment {
-  kind: "ui";
-  blockIndex: number;
-  parser: IncrementalJsxParser;
-  channel: PushChannel;
-  /** Bumped on every parser update; resets the block's error boundary. */
-  version: number;
-  lastRenderError?: string;
+/** The message's children: its regions in order, plus the frontier. */
+function renderMessage(
+  model: MessageModel,
+  blocks: readonly UiBlock[],
+  view: MessageView,
+): ReactNode[] {
+  const { regions, streaming } = model;
+  const children: ReactNode[] = [];
+  for (let i = 0; i < regions.length; i++) {
+    const region = regions[i]!;
+    if (region.kind === "ui") {
+      children.push(blocks[region.blockIndex]!.render(view.uiError(region.blockIndex)));
+    } else if (region.committed !== "" || region.tail !== "") {
+      // Only the last region can still grow.
+      children.push(view.markdown(region, streaming && i === regions.length - 1));
+    }
+  }
+  // Inside a UI block, the block's own parser renders the frontier.
+  if (streaming && !model.inUi && view.Pending) {
+    children.push(<view.Pending key="pending" />);
+  }
+  return children;
 }
 
-type Segment = MarkdownSegment | UiSegment;
+/**
+ * Memoize `renderMarkdown` per region value (regions are immutable, so a
+ * settled region keeps a stable element identity — cheap React
+ * reconciliation, like the parser's frozen subtrees).
+ */
+function memoizeMarkdown(
+  renderMarkdown: NonNullable<GenUiMessageOptions["renderMarkdown"]>,
+): MessageView["markdown"] {
+  const cache = new WeakMap<MarkdownRegion, { streaming: boolean; node: ReactNode }>();
+  return (region, streaming) => {
+    const cached = cache.get(region);
+    if (cached?.streaming === streaming) return cached.node;
+    const node = (
+      <Fragment key={`md-${region.id}`}>
+        {renderMarkdown(region.committed + region.tail, { streaming })}
+      </Fragment>
+    );
+    cache.set(region, { streaming, node });
+    return node;
+  };
+}
 
 /**
  * Create a message store bound to a stream source (a byte or string
@@ -167,120 +216,69 @@ export function createGenUiMessage(
     onIssue?.(issue);
   };
 
-  const segments: Segment[] = [];
-  let currentMarkdown: MarkdownSegment | null = null;
-  let currentUi: UiSegment | null = null;
-  let uiCount = 0;
-  let markdownCount = 0;
-  let streaming = true;
+  let model: MessageModel = EMPTY_MESSAGE;
+  /** Indexed by block index; the last one is the open block while `model.inUi`. */
+  const blocks: UiBlock[] = [];
 
-  const openMarkdownSegment = (): void => {
-    currentMarkdown = { kind: "markdown", id: markdownCount++, committed: "", tail: "" };
-    segments.push(currentMarkdown);
+  const collector = createSplitEventCollector();
+  const splitter = createFenceSplitter(collector.handlers);
+
+  const apply = (events: readonly SplitEvent[]): void => {
+    model = applySplitEvents(model, events);
+    // One write per block per chunk: fewer parser updates to render.
+    let uiText = "";
+    const flushUi = (): void => {
+      if (uiText !== "") blocks.at(-1)?.write(uiText);
+      uiText = "";
+    };
+    for (const event of events) {
+      switch (event.type) {
+        case "openUi":
+          blocks.push(
+            createUiBlock(blocks.length, parserOptions, { onIssue: recordIssue, onUpdate: bump }),
+          );
+          break;
+        case "ui":
+          uiText += event.text;
+          break;
+        case "closeUi":
+          flushUi();
+          blocks.at(-1)?.close();
+          if (!event.terminated) {
+            recordIssue({ kind: "unclosed-fence", blockIndex: blocks.length - 1 });
+          }
+          break;
+      }
+    }
+    flushUi();
   };
-  openMarkdownSegment();
 
-  const splitter = createFenceSplitter({
-    markdown(text) {
-      if (currentMarkdown) currentMarkdown.committed += text;
-    },
-    markdownTail(tail) {
-      if (currentMarkdown) currentMarkdown.tail = tail;
-    },
-    openUi() {
-      currentMarkdown = null;
-      const blockIndex = uiCount++;
-      const channel = createPushChannel();
-      const parser = createIncrementalJsxParser(channel.source, {
-        ...parserOptions,
-        onJsxError: (event) => recordIssue({ kind: "jsx-error", blockIndex, event }),
-      });
-      const segment: UiSegment = { kind: "ui", blockIndex, parser, channel, version: 0 };
-      parser.subscribe(() => {
-        segment.version++;
-        bump();
-      });
-      segments.push(segment);
-      currentUi = segment;
-    },
-    ui(text) {
-      currentUi?.channel.push(text);
-    },
-    closeUi(terminated) {
-      const segment = currentUi;
-      currentUi = null;
-      if (!segment) return;
-      segment.channel.close();
-      if (!terminated) recordIssue({ kind: "unclosed-fence", blockIndex: segment.blockIndex });
-      openMarkdownSegment();
-    },
-  });
-
-  // Report each distinct crash once, not on every retry.
-  const reportRenderError = (segment: UiSegment, error: unknown): void => {
-    const described = describeError(error);
-    if (segment.lastRenderError === described) return;
-    segment.lastRenderError = described;
-    recordIssue({ kind: "render-error", blockIndex: segment.blockIndex, error });
+  const view: MessageView = {
+    markdown: memoizeMarkdown(renderMarkdown),
+    uiError: (blockIndex) => renderUiError?.(blockIndex) ?? null,
+    Pending: parserOptions.Pending,
   };
 
   let renderedVersion = -1;
   let renderedNode: ReactNode = null;
-
   const getSnapshot = (): ReactNode => {
-    if (version === renderedVersion) return renderedNode;
-    renderedVersion = version;
-
-    const children: ReactNode[] = [];
-    for (const segment of segments) {
-      if (segment.kind === "markdown") {
-        const text = segment.committed + segment.tail;
-        if (text === "") continue;
-        const segmentStreaming = streaming && segment === currentMarkdown;
-        // Cache per text so settled regions keep a stable element identity
-        // (cheap React reconciliation), like the parser's frozen subtrees.
-        if (segment.cachedFor !== text || segment.cachedStreaming !== segmentStreaming) {
-          segment.cachedFor = text;
-          segment.cachedStreaming = segmentStreaming;
-          segment.cachedNode = (
-            <Fragment key={`md-${segment.id}`}>
-              {renderMarkdown(text, { streaming: segmentStreaming })}
-            </Fragment>
-          );
-        }
-        children.push(segment.cachedNode);
-      } else {
-        children.push(
-          <UiBlockErrorBoundary
-            key={`ui-${segment.blockIndex}`}
-            resetKey={segment.version}
-            fallback={renderUiError?.(segment.blockIndex) ?? null}
-            onError={(error) => reportRenderError(segment, error)}
-          >
-            {segment.parser.getSnapshot()}
-          </UiBlockErrorBoundary>,
-        );
-      }
+    if (version !== renderedVersion) {
+      renderedVersion = version;
+      renderedNode = renderMessage(model, blocks, view);
     }
-
-    // Inside a UI block, the block's own parser renders the frontier.
-    const PendingComponent = parserOptions.Pending;
-    if (streaming && currentMarkdown !== null && PendingComponent) {
-      children.push(<PendingComponent key="pending" />);
-    }
-
-    renderedNode = children;
     return renderedNode;
   };
 
   const handle = pumpStream(source, {
     write(chunk) {
       splitter.write(chunk);
+      apply(collector.take());
       bump();
     },
     end() {
       splitter.end();
-      streaming = false;
+      apply(collector.take());
+      model = endMessage(model);
       bump();
     },
   });
@@ -288,13 +286,13 @@ export function createGenUiMessage(
   const done = handle.done.then(
     async () => {
       // The blocks' own pumps drain asynchronously.
-      await Promise.all(segments.flatMap((s) => (s.kind === "ui" ? [s.parser.done] : [])));
+      await Promise.all(blocks.map((block) => block.done));
     },
     (error: unknown) => {
       // Finalize the open block best-effort so its parser settles; the
       // received content stays rendered.
-      streaming = false;
-      currentUi?.channel.close();
+      if (model.inUi) blocks.at(-1)?.close();
+      model = endMessage(model);
       onStreamError?.(error);
       bump();
       throw error;
@@ -310,10 +308,8 @@ export function createGenUiMessage(
     },
     dispose() {
       handle.cancel();
-      currentUi?.channel.close();
-      for (const segment of segments) {
-        if (segment.kind === "ui") segment.parser.dispose();
-      }
+      blocks.at(-1)?.close();
+      for (const block of blocks) block.dispose();
     },
     done,
     getIssues: () => issues.slice(),
