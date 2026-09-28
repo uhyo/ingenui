@@ -2,72 +2,56 @@
  * Tree builder & frontier model (PLAN.md §4.3–§4.4).
  *
  * Consumes the {@link Token} stream and maintains:
- *  - the committed AST (top-level node list), where every *closed* node is
- *    frozen and never mutated again (the append-only property that makes the
- *    parser incremental rather than a re-parse per chunk), and
- *  - a stack of currently open elements/fragments.
+ *  - the committed AST (top-level node list), where every node is immutable
+ *    and a *closed* node keeps its identity forever (the append-only property
+ *    that makes the parser incremental rather than a re-parse per chunk), and
+ *  - a stack of currently open elements/fragments. These are builder-private
+ *    {@link OpenFrame}s; a frame only becomes a (frozen) node when it closes.
  *
- * {@link TreeBuilder.snapshot} produces the live tree by overlaying the single
- * frontier — any partial text plus one {@link PendingNode} — onto the innermost
- * open node, cloning only the open path so closed subtrees keep their identity.
+ * {@link TreeBuilder.snapshot} produces the live tree by materializing the open
+ * path with the single frontier — any partial text plus one
+ * {@link PendingNode} — inside the innermost open node. Closed subtrees are
+ * shared, so they keep their identity across snapshots.
+ *
+ * Errors are **data**: {@link TreeBuilder.push} and {@link TreeBuilder.end}
+ * return the JSX error events their tokens produced (the builder calls no
+ * listener). Schema errors come from the pure functions in `validate.ts`.
  */
 
 import type { ElementNode, FragmentNode, Node, PendingNode, PropValue, VariableNode } from "./ast";
-import { isComponentName, UNSUPPORTED_EXPRESSION } from "./ast";
-import type { JsxErrorListener } from "./errors";
+import { UNSUPPORTED_EXPRESSION } from "./ast";
+import type { JsxErrorEvent } from "./errors";
 import { parseExpression, type ParsedExpression } from "./expression";
-import type { AttrValue, Pending, SourceLocation, Token } from "./tokenizer";
+import type { SourceLocation } from "./position";
+import type { AttrValue, Pending, Token } from "./tokenizer";
 import { Tokenizer } from "./tokenizer";
-
-type OpenNode = ElementNode | FragmentNode;
+import type { SchemaChecks } from "./validate";
+import { validateOpeningTag, validateVariable } from "./validate";
 
 /**
  * How to repair the tree when a closing tag does not match the innermost open
- * element. Purely a recovery strategy — the mismatch is always reported
- * through {@link TreeBuilderOptions.onJsxError} regardless of the mode.
+ * element. Purely a recovery strategy — the mismatch is always reported as a
+ * `"mismatched-tag"` error regardless of the mode.
  */
 export type MismatchBehavior = "autoclose" | "ignore";
 
-/**
- * The probes below are only consulted when `onJsxError` is set; none of them
- * affects recovery or rendering.
- */
 export interface TreeBuilderOptions {
   /** Closing-tag mismatch recovery strategy (default: "autoclose"). */
   mismatchedTag?: MismatchBehavior | undefined;
   /**
-   * The unified structured error channel: called synchronously, at parse time,
-   * for every JSX-level error — whatever recovery mode is configured.
+   * Schema checks run on every opening tag and variable reference. Absent =
+   * no schema errors are reported (structural errors always are).
    */
-  onJsxError?: JsxErrorListener | undefined;
-  /**
-   * Opening a component-like tag (see `isComponentName`) this rejects emits
-   * an `"unknown-component"` event.
-   */
-  isKnownComponent?: ((tag: string) => boolean) | undefined;
-  /**
-   * A variable reference whose dot path this rejects emits an
-   * `"unknown-variable"` event. It receives the full path, so it may validate
-   * the root name only or every segment (see `resolveVariablePath`).
-   */
-  isKnownVariable?: ((path: readonly string[]) => boolean) | undefined;
-  /**
-   * Opening an intrinsic (non-component) tag this rejects emits a
-   * `"disallowed-element"` event (see `isElementAllowed`).
-   */
-  isAllowedElement?: ((tag: string) => boolean) | undefined;
-  /**
-   * Probed for every prop when an opening tag completes: a non-`null` return
-   * is the rejection reason and emits an `"invalid-prop"` event (see
-   * `checkProp`, which the renderer applies to drop the prop).
-   */
-  checkProp?: ((tag: string, prop: string, value: PropValue) => string | null) | undefined;
+  checks?: SchemaChecks | undefined;
 }
 
 /** Only one frontier marker exists at a time, so its key is fixed. */
-const PENDING_ID = -1;
+const PENDING_NODE: PendingNode = Object.freeze({ kind: "pending", id: -1 });
 /** Wraps multiple top-level nodes of nested JSX; ids there are local anyway. */
 const NESTED_FRAGMENT_ID = -2;
+
+const NO_CHILDREN: readonly Node[] = Object.freeze([]);
+const NO_ERRORS: readonly JsxErrorEvent[] = Object.freeze([]);
 
 /** An opening tag being assembled between `openTagStart` and its `>`. */
 interface Building {
@@ -76,35 +60,102 @@ interface Building {
   loc: SourceLocation;
 }
 
-/** An open node plus its opening-tag location (for error events). */
-interface OpenEntry {
-  node: OpenNode;
-  loc: SourceLocation;
+/**
+ * An open element (`tag` non-empty) or fragment (`tag === ""`). Its children
+ * grow in place until it closes; a snapshot copies them, so no node handed
+ * out ever changes.
+ */
+interface OpenFrame {
+  readonly id: number;
+  readonly tag: string;
+  readonly props: Readonly<Record<string, PropValue>>;
+  readonly children: Node[];
+  /** The opening tag's location (for error events). */
+  readonly loc: SourceLocation;
 }
 
 export class TreeBuilder {
-  private readonly options: TreeBuilderOptions;
-  private readonly onJsxError: JsxErrorListener | undefined;
   private readonly mismatchedTag: MismatchBehavior;
+  private readonly checks: SchemaChecks | undefined;
 
   private nextId = 0;
-  /** Committed top-level nodes (the open path is mutated in place). */
+  /** Committed top-level nodes. */
   private readonly roots: Node[] = [];
   /** Outermost first; the last is the frontier's parent. */
-  private readonly openStack: OpenEntry[] = [];
+  private readonly openStack: OpenFrame[] = [];
   private building: Building | null = null;
-  /** Id reserved for the in-progress text run, kept when it commits. */
-  private currentTextId: number | null = null;
+  /** Errors produced by the current {@link push} / {@link end} call. */
+  private errors: JsxErrorEvent[] = [];
   private ended = false;
 
   constructor(options: TreeBuilderOptions = {}) {
-    this.options = options;
-    this.onJsxError = options.onJsxError;
     this.mismatchedTag = options.mismatchedTag ?? "autoclose";
+    this.checks = options.checks;
   }
 
-  /** Apply one completed token to the committed tree. */
-  push(token: Token): void {
+  /**
+   * Apply completed tokens to the committed tree; returns the error events
+   * they produced, in source order.
+   */
+  push(tokens: readonly Token[]): readonly JsxErrorEvent[] {
+    for (const token of tokens) this.apply(token);
+    return this.takeErrors();
+  }
+
+  /**
+   * Finalize the stream: close any still-open nodes and drop the frontier.
+   * Each auto-closed node is an `"unclosed-tag"` error, innermost first.
+   */
+  end(): readonly JsxErrorEvent[] {
+    while (this.openStack.length > 0) {
+      const { tag, loc } = this.openStack[this.openStack.length - 1]!;
+      this.errors.push({
+        kind: "unclosed-tag",
+        message:
+          tag === ""
+            ? "Unclosed fragment <> at end of input"
+            : `Unclosed tag <${tag}> at end of input`,
+        tag,
+        location: loc,
+      });
+      this.closeTop();
+    }
+    this.building = null;
+    this.ended = true;
+    Object.freeze(this.roots);
+    return this.takeErrors();
+  }
+
+  /**
+   * The live tree: committed nodes plus the frontier (partial text + a single
+   * {@link PendingNode}) while the stream is open. After {@link end} the
+   * committed roots are returned directly. A pure read.
+   */
+  snapshot(pending: Pending): readonly Node[] {
+    if (this.ended) return this.roots;
+
+    // Partial text is necessarily the next node to be committed (anything
+    // else first commits the text run), so it previews the next id.
+    const frontier: Node[] =
+      pending.type === "text"
+        ? [{ kind: "text", id: this.nextId, value: pending.value }, PENDING_NODE]
+        : [PENDING_NODE];
+
+    const stack = this.openStack;
+    if (stack.length === 0) return [...this.roots, ...frontier];
+
+    // Materialize the open path bottom-up; each open node's last child is the
+    // open node below it.
+    const deepest = stack[stack.length - 1]!;
+    let child = toNode(deepest, [...deepest.children, ...frontier], "open");
+    for (let i = stack.length - 2; i >= 0; i--) {
+      const frame = stack[i]!;
+      child = toNode(frame, [...frame.children, child], "open");
+    }
+    return [...this.roots, child];
+  }
+
+  private apply(token: Token): void {
     switch (token.type) {
       case "openTagStart": {
         this.building = { name: token.name, props: {}, loc: token.loc };
@@ -117,19 +168,13 @@ export class TreeBuilder {
         return;
       }
       case "openTagEnd": {
-        const entry = this.completeOpeningTag(token.loc);
-        if (entry) {
-          this.appendChild(entry.node);
-          this.openStack.push(entry);
-        }
+        const frame = this.completeOpeningTag(token.loc);
+        if (frame) this.openStack.push(frame);
         return;
       }
       case "selfClose": {
-        const entry = this.completeOpeningTag(token.loc);
-        if (entry) {
-          entry.node.status = "closed";
-          this.appendChild(freeze(entry.node));
-        }
+        const frame = this.completeOpeningTag(token.loc);
+        if (frame) this.appendChild(freeze(toNode(frame, NO_CHILDREN, "closed")));
         return;
       }
       case "closeTag": {
@@ -137,71 +182,22 @@ export class TreeBuilder {
         return;
       }
       case "text": {
-        const id = this.currentTextId ?? this.nextId++;
-        this.currentTextId = null;
-        this.appendChild(freeze({ kind: "text", id, value: token.value }));
+        this.appendChild(Object.freeze({ kind: "text", id: this.nextId++, value: token.value }));
         return;
       }
       case "expr": {
         const value = this.parseExpr(token.raw, token.loc);
-        this.appendChild(freeze({ kind: "expression", id: this.nextId++, value }));
+        this.appendChild(Object.freeze({ kind: "expression", id: this.nextId++, value }));
         return;
       }
     }
   }
 
-  /**
-   * Finalize the stream: close any still-open nodes and drop the frontier.
-   * Each auto-closed node is reported as an `"unclosed-tag"` event, innermost
-   * first.
-   */
-  end(): void {
-    while (this.openStack.length > 0) {
-      const { node, loc } = this.openStack[this.openStack.length - 1]!;
-      const name = nodeName(node);
-      this.onJsxError?.({
-        kind: "unclosed-tag",
-        message:
-          name === ""
-            ? "Unclosed fragment <> at end of input"
-            : `Unclosed tag <${name}> at end of input`,
-        tag: name,
-        location: loc,
-      });
-      this.closeTop();
-    }
-    this.building = null;
-    this.ended = true;
-  }
-
-  /**
-   * The live tree: committed nodes plus the frontier (partial text + a single
-   * {@link PendingNode}) while the stream is open. After {@link end} the
-   * committed roots are returned directly.
-   */
-  snapshot(pending: Pending): readonly Node[] {
-    if (this.ended) return this.roots;
-
-    const frontier: Node[] = [];
-    if (pending.type === "text") {
-      this.currentTextId ??= this.nextId++;
-      frontier.push({ kind: "text", id: this.currentTextId, value: pending.value });
-    }
-    const pendingNode: PendingNode = { kind: "pending", id: PENDING_ID };
-    frontier.push(pendingNode);
-
-    const stack = this.openStack;
-    if (stack.length === 0) return [...this.roots, ...frontier];
-
-    // Clone the open path bottom-up; each parent's last child is the open
-    // node below it, and stack[0] is the last root.
-    const deepest = stack[stack.length - 1]!.node;
-    let child: OpenNode = { ...deepest, children: [...deepest.children, ...frontier] };
-    for (let i = stack.length - 2; i >= 0; i--) {
-      const parent = stack[i]!.node;
-      child = { ...parent, children: [...parent.children.slice(0, -1), child] };
-    }
-    return [...this.roots.slice(0, -1), child];
+  private takeErrors(): readonly JsxErrorEvent[] {
+    if (this.errors.length === 0) return NO_ERRORS;
+    const errors = this.errors;
+    this.errors = [];
+    return errors;
   }
 
   private attrToProp(name: string, value: AttrValue): PropValue {
@@ -224,7 +220,7 @@ export class TreeBuilder {
       (path) => this.createVariable(path, loc),
     );
     if (value === UNSUPPORTED_EXPRESSION) {
-      this.onJsxError?.({
+      this.errors.push({
         kind: "unsupported-expression",
         message:
           attribute === undefined
@@ -240,33 +236,25 @@ export class TreeBuilder {
 
   private createVariable(rawPath: readonly string[], loc: SourceLocation): VariableNode {
     const path = Object.freeze(rawPath);
-    const { isKnownVariable } = this.options;
-    if (this.onJsxError && isKnownVariable && !isKnownVariable(path)) {
-      this.onJsxError({
-        kind: "unknown-variable",
-        message: `Unknown variable reference {${path.join(".")}}`,
-        name: path[0]!,
-        path,
-        location: loc,
-      });
+    if (this.checks) {
+      const error = validateVariable(path, loc, this.checks);
+      if (error) this.errors.push(error);
     }
-    return freeze({ kind: "variable", id: this.nextId++, path });
+    return Object.freeze({ kind: "variable", id: this.nextId++, path });
   }
 
   /** Parse nested JSX from an expression with a fresh, self-contained parse. */
   private parseJsx(src: string, loc: SourceLocation): Node | undefined {
     const tokenizer = new Tokenizer();
-    const onJsxError = this.onJsxError;
+    const builder = new TreeBuilder({ checks: this.checks });
+    const errors = [
+      ...builder.push(tokenizer.write(src)),
+      ...builder.push(tokenizer.end()),
+      ...builder.end(),
+    ];
     // Positions inside the buffered expression are relative to its own
-    // source, so nested events are reported at the enclosing `{` instead.
-    const builder = new TreeBuilder({
-      ...this.options,
-      mismatchedTag: undefined,
-      onJsxError: onJsxError && ((event) => onJsxError({ ...event, location: loc })),
-    });
-    for (const token of tokenizer.write(src)) builder.push(token);
-    for (const token of tokenizer.end()) builder.push(token);
-    builder.end();
+    // source, so nested errors are reported at the enclosing `{` instead.
+    for (const error of errors) this.errors.push({ ...error, location: loc });
     const nodes = builder.snapshot({ type: "none" });
     if (nodes.length <= 1) return nodes[0];
     return freeze({
@@ -278,7 +266,7 @@ export class TreeBuilder {
   }
 
   /** Complete the opening tag being assembled; `end` is the location of its `>`. */
-  private completeOpeningTag(end: SourceLocation): OpenEntry | null {
+  private completeOpeningTag(end: SourceLocation): OpenFrame | null {
     const building = this.building;
     this.building = null;
     if (!building) return null;
@@ -291,59 +279,12 @@ export class TreeBuilder {
       loc = { ...loc, lineText: end.lineText };
     }
 
-    const id = this.nextId++;
-    if (building.name === "") {
-      return { node: { kind: "fragment", id, children: [], status: "open" }, loc };
+    const { name, props } = building;
+    if (name !== "" && this.checks) {
+      const errors = validateOpeningTag(name, props, loc, this.checks);
+      for (const error of errors) this.errors.push(error);
     }
-    if (this.onJsxError) this.validateOpeningTag(building.name, building.props, loc);
-    const node: ElementNode = {
-      kind: "element",
-      id,
-      tag: building.name,
-      props: Object.freeze(building.props),
-      children: [],
-      status: "open",
-    };
-    return { node, loc };
-  }
-
-  private validateOpeningTag(
-    name: string,
-    props: Record<string, PropValue>,
-    loc: SourceLocation,
-  ): void {
-    const { isKnownComponent, isAllowedElement, checkProp } = this.options;
-    if (isComponentName(name)) {
-      if (isKnownComponent && !isKnownComponent(name)) {
-        this.onJsxError?.({
-          kind: "unknown-component",
-          message: `Unknown component <${name}>`,
-          tag: name,
-          location: loc,
-        });
-      }
-    } else if (isAllowedElement && !isAllowedElement(name)) {
-      this.onJsxError?.({
-        kind: "disallowed-element",
-        message: `Disallowed element <${name}>`,
-        tag: name,
-        location: loc,
-      });
-    }
-    if (!checkProp) return;
-    for (const [prop, value] of Object.entries(props)) {
-      const reason = checkProp(name, prop, value);
-      if (reason !== null) {
-        this.onJsxError?.({
-          kind: "invalid-prop",
-          message: `Invalid prop "${prop}" on <${name}>: ${reason}`,
-          tag: name,
-          prop,
-          reason,
-          location: loc,
-        });
-      }
-    }
+    return { id: this.nextId++, tag: name, props: Object.freeze(props), children: [], loc };
   }
 
   /**
@@ -353,7 +294,7 @@ export class TreeBuilder {
   private closeTag(name: string, loc: SourceLocation): void {
     const stack = this.openStack;
     if (stack.length === 0) {
-      this.onJsxError?.({
+      this.errors.push({
         kind: "mismatched-tag",
         message: `Stray closing tag </${name}> with nothing open`,
         tag: name,
@@ -363,13 +304,13 @@ export class TreeBuilder {
       return;
     }
 
-    const expected = nodeName(stack[stack.length - 1]!.node);
+    const expected = stack[stack.length - 1]!.tag;
     if (expected === name) {
       this.closeTop();
       return;
     }
 
-    this.onJsxError?.({
+    this.errors.push({
       kind: "mismatched-tag",
       message: `Mismatched closing tag </${name}>; expected </${expected}>`,
       tag: name,
@@ -379,37 +320,39 @@ export class TreeBuilder {
     if (this.mismatchedTag === "autoclose") {
       // Close down to a matching ancestor if there is one; otherwise treat the
       // tag as closing the innermost element.
-      const matchIndex = stack.findLastIndex((entry) => nodeName(entry.node) === name);
+      const matchIndex = stack.findLastIndex((frame) => frame.tag === name);
       const target = matchIndex >= 0 ? matchIndex : stack.length - 1;
       while (stack.length > target) this.closeTop();
     }
   }
 
-  /** Pop and freeze the innermost open node. */
+  /** Pop the innermost open frame and commit it as a frozen, closed node. */
   private closeTop(): void {
-    const entry = this.openStack.pop();
-    if (!entry) return;
-    entry.node.status = "closed";
-    freeze(entry.node);
+    const frame = this.openStack.pop();
+    if (frame) this.appendChild(freeze(toNode(frame, frame.children, "closed")));
   }
 
   private appendChild(node: Node): void {
     const parent = this.openStack[this.openStack.length - 1];
     if (parent) {
-      parent.node.children.push(node);
+      parent.children.push(node);
     } else {
       this.roots.push(node);
     }
   }
 }
 
-function nodeName(node: OpenNode): string {
-  return node.kind === "fragment" ? "" : node.tag;
+/** The node an {@link OpenFrame} stands for, with the given children. */
+function toNode(
+  frame: OpenFrame,
+  children: readonly Node[],
+  status: "open" | "closed",
+): ElementNode | FragmentNode {
+  if (frame.tag === "") return { kind: "fragment", id: frame.id, children, status };
+  return { kind: "element", id: frame.id, tag: frame.tag, props: frame.props, children, status };
 }
 
-function freeze<T extends Node>(node: T): T {
-  if (node.kind === "element" || node.kind === "fragment") {
-    Object.freeze(node.children);
-  }
+function freeze<T extends ElementNode | FragmentNode>(node: T): T {
+  Object.freeze(node.children);
   return Object.freeze(node);
 }

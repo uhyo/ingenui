@@ -1,8 +1,8 @@
-import type { SourceLocation } from "./tokenizer";
+import type { SourceLocation } from "./position";
 
 /**
  * A structured, **recoverable** JSX-level error event (PLAN.md §7), emitted
- * through `onJsxError` **as soon as the error is detected** while a chunk is
+ * through `onJsxError` **by the `write()` that completes it**, once the chunk is
  * parsed — independent of rendering and of the configured recovery mode — so
  * a stream producer (e.g. an LLM agent) can get instant feedback while the
  * tree still recovers tolerantly. Unrecoverable stream failures are not part

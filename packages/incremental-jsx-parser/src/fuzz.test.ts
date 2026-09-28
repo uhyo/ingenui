@@ -132,13 +132,13 @@ function parse(input: string, chunkSizes: number[]): readonly Node[] {
   const tb = new TreeBuilder();
   let offset = 0;
   for (const size of chunkSizes) {
-    for (const token of tk.write(input.slice(offset, offset + size))) tb.push(token);
+    tb.push(tk.write(input.slice(offset, offset + size)));
     offset += size;
     const violation = frontierViolation(tb.snapshot(tk.getPending()));
     if (violation) throw new Error(`${violation} after ${JSON.stringify(input.slice(0, offset))}`);
   }
-  for (const token of tk.write(input.slice(offset))) tb.push(token);
-  for (const token of tk.end()) tb.push(token);
+  tb.push(tk.write(input.slice(offset)));
+  tb.push(tk.end());
   tb.end();
   return tb.snapshot({ type: "none" });
 }
