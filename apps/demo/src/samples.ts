@@ -6,12 +6,22 @@
  * - `markdownSamples` are ingenui messages: Markdown where ```ui+jsx code
  *   fences render as live UI, `actions.*` references wire interactivity
  *   (model-defined names allowed by default), and problems come back as a
- *   feedback report for the model.
+ *   feedback report for the model — or, streamed through the demo server,
+ *   stop the model mid-message and get corrected in the same message.
  */
+import type { Recovery } from "./api";
+
 export interface Sample {
   id: string;
   label: string;
   source: string;
+  /**
+   * (ingenui samples) What the simulated model writes when the server stops
+   * it on an issue and asks it to continue.
+   */
+  correction?: string;
+  /** (ingenui samples) The server's recovery mode to pick with this sample. */
+  recovery?: Recovery;
 }
 
 export const jsxSamples: Sample[] = [
@@ -184,6 +194,44 @@ const parser = createGenUiMessage(stream, { components });
 The block above references an unknown component and never closes its last
 tag — the UI stays up, and the issues become the feedback report shown
 below, ready to send back to the model.
+`,
+    recovery: "log",
+  },
+  {
+    id: "stop-and-recover",
+    label: "Malformed (stopped & recovered)",
+    source: `Here's how this week went:
+
+\`\`\`ui+jsx
+<Card>
+  <Title>This week</Title>
+  <Chart data={metrics.weekly} />
+  <Row>
+    <Stat label="Visitors" value={9320} />
+    <Stat label="Signups" value={418} />
+  </Row>
+</Card>
+\`\`\`
+
+Traffic is up **12%** on last week — signups are keeping pace.
+`,
+    recovery: "continue",
+    // The server stops the model inside the <Chart> line (its first issue:
+    // the unknown `metrics` variable), closes the fence, and asks it to
+    // continue; the simulated model then writes this corrected block and
+    // carries on after the broken one.
+    correction: `
+Sorry — I can't draw charts here. The same numbers as stats:
+
+\`\`\`ui+jsx
+<Card>
+  <Title>This week</Title>
+  <Row>
+    <Stat label="Visitors" value={9320} />
+    <Stat label="Signups" value={418} />
+  </Row>
+</Card>
+\`\`\`
 `,
   },
 ];

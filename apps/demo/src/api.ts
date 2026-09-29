@@ -2,21 +2,30 @@
  * Client for the demo's server side (`worker/index.ts`).
  */
 
+/**
+ * What the server does on a JSX issue: stop the (simulated) model and
+ * continue the same message with a correction, stop it, or only log.
+ */
+export type Recovery = "continue" | "stop" | "log";
+
 export interface GenerateParams {
   text: string;
   intervalMs: number;
   chunkSize: number;
+  recovery: Recovery;
+  /** What the simulated model writes when asked to continue after a stop. */
+  correction?: string | undefined;
 }
 
 /**
  * The server's message stream for `params` (`POST /api/generate`), as a
  * byte stream for `useGenUiMessage`. Created synchronously — the request is
  * made when the stream starts — and cancelling it aborts the request.
- * `onProgress` receives the text received so far.
+ * `onProgress` receives the text received so far, and whether it is all.
  */
 export function streamGeneration(
   params: GenerateParams,
-  onProgress: (receivedSoFar: string) => void,
+  onProgress: (receivedSoFar: string, done: boolean) => void,
 ): ReadableStream<Uint8Array> {
   const abort = new AbortController();
   const decoder = new TextDecoder();
@@ -25,7 +34,7 @@ export function streamGeneration(
 
   return new ReadableStream<Uint8Array>({
     async start() {
-      onProgress("");
+      onProgress("", false);
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -40,11 +49,12 @@ export function streamGeneration(
     async pull(controller) {
       const { done, value } = await reader!.read();
       if (done) {
+        onProgress(received, true);
         controller.close();
         return;
       }
       received += decoder.decode(value, { stream: true });
-      onProgress(received);
+      onProgress(received, false);
       controller.enqueue(value);
     },
     cancel() {

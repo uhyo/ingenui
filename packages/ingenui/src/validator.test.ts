@@ -119,3 +119,43 @@ describe("createGenUiValidator", () => {
     expect(validator.getIssues()).toEqual(whole);
   });
 });
+
+const block = (body: string): string => `\`\`\`ui+jsx\n${body}\n\`\`\`\n`;
+
+describe("createGenUiValidator — cut information", () => {
+  it("reports the last clean boundary: the first block with issues", () => {
+    const clean = `Intro\n\n${block('<Card title="ok" />')}\nMore\n`;
+    const text = `${clean}${block("<Chart />")}after\n${block("<Nope />")}`;
+    const validator = createGenUiValidator(schema);
+    validator.write(clean);
+    expect(validator.getCleanOffset()).toBe(clean.length);
+    for (const char of text.slice(clean.length)) validator.write(char);
+    expect(validator.getCleanOffset()).toBe(clean.length);
+    validator.end();
+    expect(validator.getCleanOffset()).toBe(clean.length);
+  });
+
+  it("treats a block still open as not clean", () => {
+    const validator = createGenUiValidator(schema);
+    validator.write("Intro\n```ui+jsx\n<Card title=");
+    expect(validator.getCleanOffset()).toBe("Intro\n".length);
+    validator.write('"x" />\n```\nok');
+    expect(validator.getCleanOffset()).toBe('Intro\n```ui+jsx\n<Card title="x" />\n```\nok'.length);
+  });
+
+  it("gives the text closing an open fence, to write through it", () => {
+    const validator = createGenUiValidator(schema);
+    validator.write("```ui+jsx\n<div>x");
+    const close = validator.getFenceClose();
+    expect(close).toBe("\n```\n");
+    validator.write(close);
+    expect(validator.getFenceClose()).toBe("");
+    validator.write("```ui+jsx\n<p>fine</p>\n```\n");
+    validator.end();
+    // The cut block reports its unclosed tag, not an unclosed fence.
+    expect(validator.getIssues().map((issue) => [issue.blockIndex, issue.kind])).toEqual([
+      [0, "jsx-error"],
+    ]);
+    expect(validator.getFenceClose()).toBe("");
+  });
+});

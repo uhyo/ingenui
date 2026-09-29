@@ -45,8 +45,12 @@ export interface FenceSplitterHandlers {
    * it never becomes markdown). Replaces the previously reported tail.
    */
   markdownTail(tail: string): void;
-  /** A `ui+jsx` fence opened; a new UI block begins (and a markdown region ended). */
-  openUi(): void;
+  /**
+   * A `ui+jsx` fence opened; a new UI block begins (and a markdown region
+   * ended). `offset` is where the opening fence line starts in the text
+   * written so far.
+   */
+  openUi(offset: number): void;
   /** JSX source text for the currently open UI block. */
   ui(text: string): void;
   /**
@@ -60,6 +64,13 @@ export interface FenceSplitter {
   write(chunk: string): void;
   /** Finish the stream: the pending partial line is processed as a final line. */
   end(): void;
+  /**
+   * The text that, written next, closes the currently open fence (a `ui+jsx`
+   * block or a regular code fence), ending the current line first when it is
+   * partial — so whatever follows starts on a fresh line of plain Markdown.
+   * `""` outside a fence.
+   */
+  fenceClose(): string;
 }
 
 const UI_INFO = "ui+jsx";
@@ -116,6 +127,10 @@ export function createFenceSplitter(handlers: FenceSplitterHandlers): FenceSplit
   let lineFlushed = false;
   let lastTail = "";
   let ended = false;
+  /** Length of the text written before the chunk remainder being processed. */
+  let consumed = 0;
+  /** Offset where the current line starts. */
+  let lineStart = 0;
 
   const setTail = (tail: string): void => {
     if (tail !== lastTail) {
@@ -175,7 +190,7 @@ export function createFenceSplitter(handlers: FenceSplitterHandlers): FenceSplit
     if (uiOpen) {
       mode = { kind: "ui", size: uiOpen[1]!.length };
       setTail("");
-      handlers.openUi();
+      handlers.openUi(lineStart);
       return;
     }
     const fenceOpen = FENCE_OPEN.exec(full);
@@ -191,10 +206,13 @@ export function createFenceSplitter(handlers: FenceSplitterHandlers): FenceSplit
         const nl = rest.indexOf("\n");
         if (nl === -1) {
           appendPartial(rest);
+          consumed += rest.length;
           break;
         }
         appendPartial(rest.slice(0, nl));
         completeLine(false);
+        consumed += nl + 1;
+        lineStart = consumed;
         rest = rest.slice(nl + 1);
       }
       setTail(mode.kind === "ui" || (mode.kind === "markdown" && isUiOpenPrefix(line)) ? "" : line);
@@ -208,6 +226,14 @@ export function createFenceSplitter(handlers: FenceSplitterHandlers): FenceSplit
         mode = { kind: "markdown" };
         handlers.closeUi(false);
       }
+    },
+    fenceClose() {
+      if (ended || mode.kind === "markdown") return "";
+      const fence = `${"`".repeat(mode.size)}\n`;
+      if (line === "" && !lineFlushed) return fence;
+      // A partial line that already is a closing fence only needs its newline.
+      if (!lineFlushed && isFenceClose(line, mode.size)) return "\n";
+      return `\n${fence}`;
     },
   };
 }

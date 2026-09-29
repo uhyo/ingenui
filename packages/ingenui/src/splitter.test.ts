@@ -199,3 +199,67 @@ describe("createFenceSplitter — streaming", () => {
     expect(r.rec.regions[1]).toEqual(ui("<div/>\n```x", false));
   });
 });
+
+describe("createFenceSplitter — opener offsets", () => {
+  it("reports where each opening fence line starts, for any chunking", () => {
+    const input = "Hi\n```ui+jsx\n<div/>\n```\ntext\n  ````ui+jsx\n<p/>\n````\n";
+    const expected = [input.indexOf("```ui"), input.indexOf("  ````")];
+    for (const size of [1, 2, 5, input.length]) {
+      const offsets: number[] = [];
+      const splitter = createFenceSplitter({
+        markdown() {},
+        markdownTail() {},
+        openUi: (offset) => void offsets.push(offset),
+        ui() {},
+        closeUi() {},
+      });
+      for (let i = 0; i < input.length; i += size) splitter.write(input.slice(i, i + size));
+      splitter.end();
+      expect(offsets, `size ${size}`).toEqual(expected);
+    }
+  });
+});
+
+describe("createFenceSplitter — fenceClose", () => {
+  /** The splitter's fenceClose() after `input`, and whether writing it closes the open fence. */
+  function closeAfter(input: string): { close: string; closes: boolean } {
+    const r = record();
+    const splitter = createFenceSplitter({
+      markdown() {},
+      markdownTail() {},
+      openUi() {},
+      ui() {},
+      closeUi() {},
+    });
+    splitter.write(input);
+    const close = splitter.fenceClose();
+    // Replay through a recording splitter: after the close, a ui+jsx opener
+    // must start a new block (so we are back in plain Markdown).
+    r.write(input + close + "```ui+jsx\n<b/>\n```\n");
+    r.end();
+    const blocks = r.rec.regions.filter((region) => typeof region !== "string");
+    const last = blocks.at(-1);
+    return { close, closes: typeof last === "object" && last.ui === "<b/>\n" };
+  }
+
+  it("is empty in plain Markdown", () => {
+    expect(closeAfter("text\n").close).toBe("");
+    expect(closeAfter("partial line").close).toBe("");
+  });
+
+  it("closes an open ui+jsx block, ending a partial line first", () => {
+    expect(closeAfter("```ui+jsx\n<div>\n")).toEqual({ close: "```\n", closes: true });
+    expect(closeAfter("```ui+jsx\n<div>te")).toEqual({ close: "\n```\n", closes: true });
+    expect(closeAfter("````ui+jsx\n<div>")).toEqual({ close: "\n````\n", closes: true });
+    // Withheld backticks that cannot close on their own.
+    expect(closeAfter("```ui+jsx\n<div/>\n``")).toEqual({ close: "\n```\n", closes: true });
+  });
+
+  it("only ends the line when the partial line already is the closing fence", () => {
+    expect(closeAfter("```ui+jsx\n<div/>\n```")).toEqual({ close: "\n", closes: true });
+  });
+
+  it("closes a regular code fence too", () => {
+    expect(closeAfter("```js\nconst x")).toEqual({ close: "\n```\n", closes: true });
+  });
+});

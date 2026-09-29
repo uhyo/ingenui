@@ -43,8 +43,9 @@ Let me know if you have questions!
 - **Server and client** — one data-only schema, shared by both sides. The
   server (`ingenui/server`, React-free) builds the prompt and validates the
   model's stream as it passes through, catching the same issues the client
-  will, as they arrive. The client binds type-checked components to the
-  schema. RSC is not required.
+  will, as they arrive — and can stop the model on one and continue the
+  same message with a correction. The client binds type-checked components
+  to the schema. RSC is not required.
 
 > **Status:** early development. The API is implemented and tested, but may
 > still change before a stable release.
@@ -114,8 +115,9 @@ after `message.done`.
   `useGenUiMessage` / `useGenUiNode`, `formatGenUiPrompt`,
   `defineGenUiSchema` / `bindGenUi`, and `ingenui/server`.
 - [Server and client](./docs/server.md) — the shared schema, server-side
-  validation (`pipeGenUi`), building the next request on the server, and
-  sharing patterns (plain modules, RSC).
+  validation (`pipeGenUi`), stopping a message on an issue and recovering,
+  building the next request on the server, and sharing patterns (plain
+  modules, RSC).
 - [The `actions` convention](./docs/actions.md) — declared and model-defined
   actions, and `dynamicActions`.
 - [Issues and error containment](./docs/issues.md) — the issue kinds, the

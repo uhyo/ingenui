@@ -137,8 +137,9 @@ The React-free server side. See [server and client](./server.md#the-server--inge
 | Export | Description |
 | ------ | ----------- |
 | `formatGenUiPrompt(schema)` | The system prompt, as above. |
-| `pipeGenUi(source, schema, { onIssue? })` | Validates a stream while passing it through. Returns `{ stream, done, getIssues, getIssueReport }`: `stream` is a UTF-8 byte stream ready to be a `Response` body, and `done` resolves with the issues at the end. |
-| `createGenUiValidator(schema, { onIssue? })` | A push-based validator (`write`, `end`, `getIssues`, `getIssueReport`). |
+| `pipeGenUi(source, schema, { onIssue?, continuation? })` | Validates a stream while passing it through. Returns `{ stream, done, stop, getIssues, getIssueReport }`: `stream` is a UTF-8 byte stream ready to be a `Response` body, `done` resolves with the result (`status`, `text`, `issues`, `issueReport`, `cleanOffset` / `cleanText`, `stops`) at the end, and `stop()` [stops the message](./server.md#stopping-and-recovering) (`onIssue` receives the pipe too). `continuation` continues a stopped message with a new source. |
+| `formatContinuationMessage(text, issueReport)` | The user message asking the model to continue an interrupted response after `text`, with the issue report. |
+| `createGenUiValidator(schema, { onIssue? })` | A push-based validator (`write`, `end`, `getIssues`, `getIssueReport`, `getCleanOffset`, `getFenceClose`). |
 | `validateGenUiMessage(text, schema)` | Validates a complete message and returns its issues. |
 | `resolveGenUiAction(schema, name)` | Resolves an action name sent by the client to `{ name, reference, message, declared }`, or `null` if the model could not have wired it. |
 | `formatIssueReport(issues)` / `formatActionMessage(name)` / `formatJsxError(event)` | Feedback formatting, as on the client. |

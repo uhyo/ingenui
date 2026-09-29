@@ -6,7 +6,9 @@
  *
  * - `GET  /api/prompt`   — the system prompt, built from the schema;
  * - `POST /api/generate` — streams a message to the client through
- *   `pipeGenUi`, validating it on the way;
+ *   `pipeGenUi`, validating it on the way — and, on a JSX issue, stopping the
+ *   "model" and continuing the same message with a correction (or just
+ *   stopping it, or only logging, per the request's `recovery`);
  * - `POST /api/next`     — builds the next user turn from *structured*
  *   client input (a fired action's name, render crashes), re-validating the
  *   previous message itself instead of trusting client-written text.
@@ -14,13 +16,16 @@
  * The demo has no API key, so the "LLM provider" is simulated: it replays the
  * text the user typed, a few characters at a time. A real app would call the
  * provider with the prompt from `/api/prompt` and pipe its text stream the
- * same way.
+ * same way; asked to continue after a stop (the request a real app builds
+ * with `formatContinuationMessage`), the simulated model writes the sample's
+ * correction, then carries on after the broken block.
  *
  * In `vite dev` the same handler is served by a middleware (see
  * `vite.config.ts`); `wrangler dev` / `wrangler deploy` run it as the Worker.
  */
-import type { GenUiIssue } from "ingenui/server";
+import type { GenUiIssue, GenUiPipeSnapshot } from "ingenui/server";
 import {
+  formatContinuationMessage,
   formatGenUiPrompt,
   formatIssueReport,
   pipeGenUi,
@@ -60,23 +65,82 @@ function simulateModel(text: string, intervalMs: number, chunkSize: number) {
   return createCharStream(text, { intervalMs, chunkSize });
 }
 
+type Recovery = "continue" | "stop" | "log";
+
+/** How many times one message may be stopped and continued. */
+const MAX_STOPS = 2;
+
+const DEFAULT_CORRECTION = "\n*(That UI block had a problem, so I left it out.)*\n\n";
+
+/** A closing fence line, from the start of a line. */
+const FENCE_CLOSE_LINE = /(?:^|\n) {0,3}`{3,}[ \t]*(?:\n|$)/;
+
+/**
+ * What the simulated model writes when asked to continue: the correction,
+ * then the rest of what it meant to write. It compares what was forwarded
+ * with its intended text; when they diverge, it was cut inside a block (the
+ * pipe closed the fence), so it skips the rest of that block.
+ */
+function continuationOf(intended: string, forwarded: string, correction: string): string {
+  let cut = 0;
+  while (cut < forwarded.length && forwarded[cut] === intended[cut]) cut++;
+  let rest = intended.slice(cut);
+  if (cut < forwarded.length) {
+    const close = FENCE_CLOSE_LINE.exec(rest);
+    rest = close === null ? "" : rest.slice(close.index + close[0].length);
+  }
+  return `${correction}${rest}`;
+}
+
 async function generate(request: Request): Promise<Response> {
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const text = readMessage(body?.["text"]);
   if (text === null) return json({ error: "text must be a string (up to 20k chars)" }, 400);
+  const requested = body?.["recovery"];
+  const recovery: Recovery = requested === "stop" || requested === "log" ? requested : "continue";
+  const sampleCorrection = body?.["correction"];
+  const correction =
+    typeof sampleCorrection === "string" && sampleCorrection.length <= 2_000
+      ? sampleCorrection
+      : DEFAULT_CORRECTION;
 
-  const source = simulateModel(
-    text,
-    clamp(body?.["intervalMs"], 5, 500, 45),
-    clamp(body?.["chunkSize"], 1, 64, 2),
-  );
+  const intervalMs = clamp(body?.["intervalMs"], 5, 500, 45);
+  const chunkSize = clamp(body?.["chunkSize"], 1, 64, 2);
   const started = Date.now();
-  const pipe = pipeGenUi(source, demoSchema, {
+  const log = (message: string) => console.log(`[ingenui] +${Date.now() - started}ms`, message);
+
+  // The simulated model's current response, and where it starts in the message.
+  let intended = text;
+  let attemptStart = 0;
+  const pipe = pipeGenUi(simulateModel(text, intervalMs, chunkSize), demoSchema, {
     // Found while streaming — before the client has the chunk that completes
-    // the problem. The demo only logs it (visible in the dev-server / Worker
-    // logs); acting on it (aborting, retrying) is a later step.
-    onIssue: (issue) => console.log(`[ingenui] +${Date.now() - started}ms`, describe(issue)),
+    // the problem (visible in the dev-server / Worker logs).
+    onIssue(issue, target) {
+      log(describe(issue));
+      // A real app would also abort its provider request here.
+      if (recovery !== "log" && issue.kind === "jsx-error") target.stop();
+    },
+    continuation:
+      recovery === "continue"
+        ? (snapshot: GenUiPipeSnapshot) => {
+            log(
+              `stopped (${snapshot.stops}/${MAX_STOPS}); clean prefix: ${snapshot.cleanOffset} chars`,
+            );
+            if (snapshot.stops > MAX_STOPS) return null;
+            // A real app sends this as a new request's last user message.
+            const followUp = formatContinuationMessage(snapshot.text, snapshot.issueReport);
+            log(`continuation request (${followUp.length} chars)`);
+            intended = continuationOf(intended, snapshot.text.slice(attemptStart), correction);
+            attemptStart = snapshot.text.length;
+            return simulateModel(intended, intervalMs, chunkSize);
+          }
+        : undefined,
   });
+  pipe.done.then(
+    (result) =>
+      log(`${result.status} after ${result.stops} stop(s), ${result.issues.length} issue(s)`),
+    () => {},
+  );
   return new Response(pipe.stream, {
     headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
   });
