@@ -51,6 +51,10 @@ the right.
 - **Components as an allowlist** — only the components in
   [`src/components.tsx`](./src/components.tsx) can be instantiated by the streamed
   source; anything else degrades to `<Pending />`.
+- **Broken blocks, marked** — `wrapUiBlock` greys out and labels a block
+  with issues (or cut off mid-way). With "Stop & continue", the broken
+  partial block stays above the model's corrected one (try the
+  "Malformed (stopped & recovered)" sample).
 - **The actions loop** — `onClick={actions.addToCart}` in a sample wires a real
   click handler; firing it emits "The `actions.addToCart` action was fired by
   the user.", shown in the action log.
@@ -124,6 +128,7 @@ const { node, message } = useGenUiMessage(streamGeneration(params), {
   Pending: Shimmer,                // frontier placeholder
   onAction: (event) => { /* POST /api/next { message, action: event.name } -> the action log */ },
   onIssue: (issue) => { /* surfaced live in the UI */ },
+  wrapUiBlock: (props) => <UiBlockFrame {...props} />, // greys out a broken block
 });
 // on message.done: POST /api/next { message, renderErrors } -> the feedback panel
 ```

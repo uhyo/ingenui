@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPushChannel } from "./channel";
 import type { GenUiIssue } from "./issues";
 import { createGenUiMessage } from "./message";
+import type { UiBlockWrapperProps } from "./ui-block";
 import { useGenUiNode } from "./react";
 
 function html(node: ReactNode): string {
@@ -276,6 +277,162 @@ describe("createGenUiMessage — issues", () => {
       await message.done;
     });
     expect(container.innerHTML).toBe("<b>badge</b>");
+  });
+});
+
+/** A wrapper that renders the block's status as attributes, recording each call. */
+function recordingWrapper() {
+  const calls: UiBlockWrapperProps[] = [];
+  const wrapUiBlock = (props: UiBlockWrapperProps): ReactNode => {
+    calls.push(props);
+    return (
+      <div
+        data-block={props.blockIndex}
+        data-state={props.state}
+        data-issues={props.issues.map((i) => i.kind).join(",")}
+        data-crashed={String(props.crashed)}
+      >
+        {props.children}
+      </div>
+    );
+  };
+  const last = (blockIndex: number) => calls.findLast((c) => c.blockIndex === blockIndex);
+  return { calls, wrapUiBlock, last };
+}
+
+describe("createGenUiMessage — wrapUiBlock", () => {
+  it("sees jsx-error issues on a block that still renders, and a clean block after it", async () => {
+    const { wrapUiBlock, last } = recordingWrapper();
+    const message = createGenUiMessage(
+      iterableFrom([
+        "```ui+jsx\n<p>{broken()}ok</p>\n```\n\nFixed:\n\n",
+        "```ui+jsx\n<p>fine</p>\n```\n",
+      ]),
+      { wrapUiBlock },
+    );
+    await message.done;
+    expect(html(message.getSnapshot())).toBe(
+      '<div data-block="0" data-state="closed" data-issues="jsx-error" data-crashed="false"><p>ok</p></div>' +
+        "<p>Fixed:</p>" +
+        '<div data-block="1" data-state="closed" data-issues="" data-crashed="false"><p>fine</p></div>',
+    );
+    // The same issue objects the message collects.
+    expect(last(0)!.issues).toEqual(message.getIssues());
+    expect(last(0)!.issues[0]).toMatchObject({
+      kind: "jsx-error",
+      event: { kind: "unsupported-expression" },
+    });
+  });
+
+  it("sees a block streaming, then cut off before its closing fence", async () => {
+    const { wrapUiBlock, last } = recordingWrapper();
+    const outer = createPushChannel();
+    const message = createGenUiMessage(outer.source, { wrapUiBlock });
+    outer.push("```ui+jsx\n<p>partial");
+    await settle();
+    message.getSnapshot();
+    expect(last(0)).toMatchObject({ state: "streaming", issues: [] });
+
+    // The stream ends mid-block (e.g. the server stopped the model).
+    outer.close();
+    await message.done;
+    expect(html(message.getSnapshot())).toBe(
+      '<div data-block="0" data-state="unterminated" data-issues="jsx-error" data-crashed="false"><p>partial</p></div>',
+    );
+    // The unclosed tag is the block's issue; the unclosed fence is its state.
+    expect(message.getIssues().map((i) => i.kind)).toEqual(["unclosed-fence", "jsx-error"]);
+  });
+
+  it("marks the open block unterminated when the stream fails", async () => {
+    const { wrapUiBlock, last } = recordingWrapper();
+    async function* failing(): AsyncGenerator<string> {
+      yield "```ui+jsx\n<div>partial";
+      throw new Error("network down");
+    }
+    const message = createGenUiMessage(failing(), { wrapUiBlock });
+    await expect(message.done).rejects.toThrow("network down");
+    message.getSnapshot();
+    expect(last(0)?.state).toBe("unterminated");
+  });
+
+  it("sees a crash (children is the renderUiError fallback), and the recovery", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const Boom = ({ children }: { children?: ReactNode }) => {
+      const text = Children.toArray(children)
+        .filter((child): child is string => typeof child === "string")
+        .join("");
+      if (text === "bad") throw new Error("transiently bad");
+      return <b>{text}</b>;
+    };
+    const { wrapUiBlock } = recordingWrapper();
+    const outer = createPushChannel();
+    const message = createGenUiMessage(outer.source, {
+      components: { Boom },
+      wrapUiBlock,
+      renderUiError: (blockIndex) => <em>block {blockIndex + 1} crashed</em>,
+    });
+    const View = () => <>{useGenUiNode(message)}</>;
+    const { container } = render(<View />);
+
+    await act(async () => {
+      outer.push("```ui+jsx\n<Boom>bad");
+      await settle();
+    });
+    expect(container.innerHTML).toBe(
+      '<div data-block="0" data-state="streaming" data-issues="render-error" data-crashed="true"><em>block 1 crashed</em></div>',
+    );
+
+    await act(async () => {
+      outer.push("ge</Boom>\n```\n");
+      outer.close();
+      await settle();
+    });
+    await act(async () => {
+      await message.done;
+    });
+    // Healed: no longer crashed, but the crash stays on record.
+    expect(container.innerHTML).toBe(
+      '<div data-block="0" data-state="closed" data-issues="render-error" data-crashed="false"><b>badge</b></div>',
+    );
+  });
+
+  it("stays crashed without re-rendering the wrapper for a crash that persists", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const Boom = (): ReactNode => {
+      throw new Error("always broken");
+    };
+    const { wrapUiBlock, calls } = recordingWrapper();
+    const message = createGenUiMessage(iterableFrom(["```ui+jsx\n<Boom />\n```\n"]), {
+      components: { Boom },
+      wrapUiBlock,
+    });
+    await message.done;
+    const View = () => <>{useGenUiNode(message)}</>;
+    const { container } = render(<View />);
+    expect(container.innerHTML).toBe(
+      '<div data-block="0" data-state="closed" data-issues="render-error" data-crashed="true"></div>',
+    );
+    // Rendered once before the crash, once after it.
+    expect(calls.map((c) => c.crashed)).toEqual([false, true]);
+  });
+
+  it("keeps a settled block's wrapped element while the message grows", async () => {
+    const { wrapUiBlock, calls } = recordingWrapper();
+    const outer = createPushChannel();
+    const message = createGenUiMessage(outer.source, { wrapUiBlock });
+    outer.push("```ui+jsx\n<p>done</p>\n```\n");
+    await settle();
+    await settle();
+    const before = message.getSnapshot() as ReactNode[];
+    const callsBefore = calls.length;
+    outer.push("More text");
+    await settle();
+    const after = message.getSnapshot() as ReactNode[];
+    expect(after).not.toBe(before);
+    expect(after[0]).toBe(before[0]);
+    expect(calls).toHaveLength(callsBefore);
+    outer.close();
+    await message.done;
   });
 });
 

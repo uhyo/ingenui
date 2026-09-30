@@ -59,7 +59,7 @@ export const schema = defineGenUiSchema({
 The rule for what goes where: anything that changes **parse results** is in
 the schema. Options that only affect **rendering** (`Pending`,
 `onUnknownComponent`, `onDisallowedElement`, `renderMarkdown`,
-`renderUiError`) stay client-side.
+`renderUiError`, `wrapUiBlock`) stay client-side.
 
 `defineGenUiSchema` does nothing at runtime. At the type level it keeps the
 literal shape, which is what lets `bindGenUi` check the bindings.
@@ -343,7 +343,8 @@ async function respond(messages: Anthropic.MessageParam[]): Promise<Response> {
 ```
 
 The broken block stays on screen above the correction. How it looks there
-is a client rendering concern (`renderUiError`, your components).
+is a client rendering concern: [`wrapUiBlock`](./issues.md#wrapping-ui-blocks)
+sees the block's issues and can collapse, grey out, or label it.
 
 #### Rewind and restart
 

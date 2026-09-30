@@ -46,6 +46,8 @@ export type { GenUiIssue, IssueListener } from "./issues";
 export { renderMarkdown } from "./markdown";
 export type { RenderMarkdownOptions } from "./markdown";
 
+export type { UiBlockIssue, UiBlockState, UiBlockStatus, UiBlockWrapperProps } from "./ui-block";
+
 export { UiBlockErrorBoundary } from "./boundary";
 export type { UiBlockErrorBoundaryProps } from "./boundary";
 

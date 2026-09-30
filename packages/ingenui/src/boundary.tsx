@@ -11,7 +11,8 @@
  * crash caused by a temporarily-truncated tree heals itself as more of the
  * stream arrives. If the final content still crashes, the boundary stays on
  * the fallback and the error is reported through `onError` (which ingenui
- * records as a `render-error` issue for the model).
+ * records as a `render-error` issue for the model). A retry that renders
+ * again is reported through `onRecover`.
  */
 
 import { Component } from "react";
@@ -24,6 +25,8 @@ export interface UiBlockErrorBoundaryProps {
   fallback?: ReactNode;
   /** Called once per caught error. */
   onError?: (error: unknown) => void;
+  /** Called when a retry renders the children again after a crash. */
+  onRecover?: () => void;
   children?: ReactNode;
 }
 
@@ -58,6 +61,13 @@ export class UiBlockErrorBoundary extends Component<
 
   override componentDidCatch(error: unknown): void {
     this.props.onError?.(error);
+  }
+
+  override componentDidUpdate(
+    _prevProps: UiBlockErrorBoundaryProps,
+    prevState: UiBlockErrorBoundaryState,
+  ): void {
+    if (prevState.failed && !this.state.failed) this.props.onRecover?.();
   }
 
   override render(): ReactNode {

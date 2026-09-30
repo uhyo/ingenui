@@ -671,6 +671,25 @@ code {
   color: var(--muted);
 }
 
+.ui-block--broken {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px dashed rgba(240, 180, 41, 0.5);
+  border-radius: 12px;
+}
+
+.ui-block__label {
+  margin-bottom: 8px;
+  color: var(--warning);
+  font-size: 0.78rem;
+}
+
+.ui-block--broken .ui-block__body {
+  opacity: 0.45;
+  filter: grayscale(1);
+  pointer-events: none;
+}
+
 .ui-callout {
   padding: 12px 14px;
   border-radius: 10px;
