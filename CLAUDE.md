@@ -135,8 +135,8 @@ are relative to `packages/ingenui/`:
 | `src/prompt.ts` | `formatGenUiPrompt`: message format + actions (with descriptions) + the parser's `formatPromptContract`. Takes a `GenUiSchema` or the client options. |
 | `src/schema.ts` | `./schema` entry: `GenUiSchema`, the parse-affecting options as plain data (elements, component prop catalogs + descriptions, `variableTypes`, actions, `dynamicActions`, `mismatchedTag`), + `defineGenUiSchema` (identity; keeps literal types). Shared by server and client. |
 | `src/bind.ts` | `bindGenUi(schema, bindings)`: attaches components / variable values / action handlers, returning `createGenUiMessage` options. Type-checks the bindings (`InferSchemaType` / `InferComponentProps`: declared props all optional + `children`) and throws on missing or undeclared bindings. |
-| `src/validator.ts` | `createGenUiValidator` / `validateGenUiMessage`: splitter + the parser core's `createParser` per block, wired with `createSchemaChecks` exactly like the client's parser. Synchronous issues. |
-| `src/pipe.ts` | `pipeGenUi`: pull-based pass-through `ReadableStream<Uint8Array>` that validates as it goes; `done` resolves with the issues. |
+| `src/validator.ts` | `createGenUiValidator` / `validateGenUiMessage`: splitter + the parser core's `createParser` per block, wired with `createSchemaChecks` exactly like the client's parser. Synchronous issues. Also the cut information: the last clean boundary (`getCleanOffset`, from the splitter's opener offsets) and the open fence's closing text (`getFenceClose`). |
+| `src/pipe.ts` | `pipeGenUi`: pull-based pass-through `ReadableStream<Uint8Array>` that validates as it goes; `done` resolves with the result (status, text, issues, clean boundary). `stop()` (also via `onIssue`'s second argument) cancels the source and ends the stream normally; the `continuation` option closes an open fence and pipes a new source into the same message. Transport-agnostic: only text goes over the wire. `formatContinuationMessage` builds the "continue from where you left off" request. |
 | `src/index.ts` / `src/react.ts` / `src/server.ts` | Entries: `.` (store + helpers + `bindGenUi`), `./react` (`useGenUiMessage`, `useGenUiNode`), `./server` (validator, `pipeGenUi`, prompt, `resolveGenUiAction`, report formatting). |
 
 Invariants: chunk independence end-to-end (its own fuzz suite); markdown
@@ -144,8 +144,9 @@ regions keep stable element identities once settled; a crashed UI block never
 takes down the message (boundary + retry); issues are the only error channel
 (`onJsxError` is not exposed); **server/client parity**: for the same text and
 schema, the server validator reports exactly the client's parse-time issues
-(`jsx-error` and `unclosed-fence`; only `render-error` is client-only). The
-fuzz suite checks this. Both sides build their schema checks with the
+(`jsx-error` and `unclosed-fence`; only `render-error` is client-only),
+including for stopped and continued piped messages. The fuzz suite checks
+this. Both sides build their schema checks with the
 parser's `createSchemaChecks`; keep the rest of the validator's parser wiring
 in step with `createIncrementalJsxParser`'s. Every parse-affecting option belongs in
 `GenUiSchema`. **`./schema` and `./server` stay React-free**: they may import

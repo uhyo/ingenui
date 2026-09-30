@@ -4,6 +4,7 @@ import { useIncrementalJsx } from "@ingenui/incremental-jsx-parser/react";
 import type { GenUiIssue } from "ingenui";
 import { useGenUiMessage } from "ingenui/react";
 
+import type { Recovery } from "./api";
 import { fetchNextTurn, fetchSystemPrompt, streamGeneration } from "./api";
 import { componentNames, demoComponents, genUi, Shimmer } from "./components";
 import { jsxSamples, markdownSamples, type Sample } from "./samples";
@@ -28,7 +29,15 @@ interface RunParams {
   text: string;
   intervalMs: number;
   chunkSize: number;
+  recovery: Recovery;
+  correction: string | undefined;
 }
+
+const RECOVERIES: { id: Recovery; label: string }[] = [
+  { id: "continue", label: "Stop & continue" },
+  { id: "stop", label: "Stop" },
+  { id: "log", label: "Log only" },
+];
 
 const SPEEDS = [
   { label: "Slow", intervalMs: 90, chunkSize: 1 },
@@ -40,6 +49,8 @@ export function App() {
   const [mode, setMode] = useState<Mode>("genui");
   const [text, setText] = useState(markdownSamples[0]!.source);
   const [speedIndex, setSpeedIndex] = useState(1);
+  const [recovery, setRecovery] = useState<Recovery>("continue");
+  const [correction, setCorrection] = useState<string | undefined>(undefined);
   const [run, setRun] = useState<RunParams | null>(null);
 
   const modeInfo = MODES.find((m) => m.id === mode)!;
@@ -47,7 +58,13 @@ export function App() {
   const switchMode = (next: ModeInfo) => {
     if (next.id === mode) return;
     setMode(next.id);
-    setText(next.samples[0]!.source);
+    loadSample(next.samples[0]!);
+  };
+
+  const loadSample = (sample: Sample) => {
+    setText(sample.source);
+    setCorrection(sample.correction);
+    if (sample.recovery) setRecovery(sample.recovery);
   };
 
   const startStream = () => {
@@ -58,6 +75,8 @@ export function App() {
       text,
       intervalMs: speed.intervalMs,
       chunkSize: speed.chunkSize,
+      recovery,
+      correction,
     });
   };
 
@@ -111,7 +130,7 @@ export function App() {
               value=""
               onChange={(e) => {
                 const sample = modeInfo.samples.find((s) => s.id === e.target.value);
-                if (sample) setText(sample.source);
+                if (sample) loadSample(sample);
               }}
             >
               <option value="" disabled>
@@ -136,6 +155,19 @@ export function App() {
             </select>
           </label>
 
+          {mode === "genui" && (
+            <label className="field">
+              <span>On issue</span>
+              <select value={recovery} onChange={(e) => setRecovery(e.target.value as Recovery)}>
+                {RECOVERIES.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <button className="run" type="button" onClick={startStream}>
             {run ? "↻ Replay stream" : "▶ Stream it"}
           </button>
@@ -158,7 +190,9 @@ export function App() {
               {" "}
               — and <code>actions.*</code> names are model-defined (dynamic actions, the default).
               The catalog is a data-only schema shared with the server, which streams the message
-              back through <code>pipeGenUi</code>, validating it on the way.
+              back through <code>pipeGenUi</code>, validating it on the way. On a JSX issue, the
+              server can stop the model before the broken chunk even reaches you — and continue the
+              same message with a correction.
             </>
           )}
         </p>
@@ -182,16 +216,19 @@ export function App() {
 function StreamPanes({
   params,
   streamed,
+  done,
   paneTitle,
   children,
 }: {
   params: RunParams;
   streamed: string;
+  /** Whether the whole stream has arrived. */
+  done: boolean;
   paneTitle: string;
   children: ReactNode;
 }) {
-  const done = streamed === params.text;
-  const progress = params.text.length === 0 ? 1 : streamed.length / params.text.length;
+  // An estimate: a stopped or continued message differs from the input.
+  const progress = done ? 1 : Math.min(1, streamed.length / Math.max(1, params.text.length));
   return (
     <>
       <div className="stage__panes">
@@ -251,7 +288,12 @@ function JsxStreamView({ params }: { params: RunParams }) {
 
   return (
     <section className="stage">
-      <StreamPanes params={params} streamed={streamed} paneTitle="Live React tree">
+      <StreamPanes
+        params={params}
+        streamed={streamed}
+        done={streamed === params.text}
+        paneTitle="Live React tree"
+      >
         {node}
       </StreamPanes>
 
@@ -303,6 +345,7 @@ function SystemPrompt() {
 
 function GenUiStreamView({ params }: { params: RunParams }) {
   const [streamed, setStreamed] = useState("");
+  const [received, setReceived] = useState(false);
   const [issues, setIssues] = useState<{ id: number; message: string }[]>([]);
   const [actionLog, setActionLog] = useState<{ id: number; message: string }[]>([]);
   const [report, setReport] = useState<string | null>(null);
@@ -314,10 +357,17 @@ function GenUiStreamView({ params }: { params: RunParams }) {
   const stream = useMemo(
     () =>
       streamGeneration(
-        { text: params.text, intervalMs: params.intervalMs, chunkSize: params.chunkSize },
-        (text) => {
+        {
+          text: params.text,
+          intervalMs: params.intervalMs,
+          chunkSize: params.chunkSize,
+          recovery: params.recovery,
+          correction: params.correction,
+        },
+        (text, done) => {
           streamedRef.current = text;
           setStreamed(text);
+          setReceived(done);
         },
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -378,7 +428,7 @@ function GenUiStreamView({ params }: { params: RunParams }) {
 
   return (
     <section className="stage">
-      <StreamPanes params={params} streamed={streamed} paneTitle="Live message">
+      <StreamPanes params={params} streamed={streamed} done={received} paneTitle="Live message">
         {node}
       </StreamPanes>
 

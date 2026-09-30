@@ -54,6 +54,21 @@ export interface GenUiValidator {
   getIssues(): readonly GenUiIssue[];
   /** The issues formatted as feedback for the model, or `null` when clean. */
   getIssueReport(): string | null;
+  /**
+   * The last clean boundary: the offset (into the text written so far) of the
+   * opening fence line of the first `ui+jsx` block with issues, or of the
+   * block still open — whichever comes first. The text before it is plain
+   * Markdown and issue-free blocks. When there is neither, the length of the
+   * text written so far.
+   */
+  getCleanOffset(): number;
+  /**
+   * The text that closes the currently open fence (a `ui+jsx` block or a
+   * regular code fence), ending a partial line first — so text written after
+   * it starts on a fresh line of plain Markdown. `""` outside a fence (and
+   * after `end()`). Write it through the validator like any other text.
+   */
+  getFenceClose(): string;
 }
 
 /**
@@ -71,18 +86,26 @@ export function createGenUiValidator(
   const checks = createSchemaChecks(schemaParserOptions(schema));
 
   const issues: GenUiIssue[] = [];
+  /** The lowest block index with issues. */
+  let firstIssueBlock = Infinity;
   const record = (issue: GenUiIssue): void => {
     issues.push(issue);
+    firstIssueBlock = Math.min(firstIssueBlock, issue.blockIndex);
     options.onIssue?.(issue);
   };
 
+  let written = 0;
+  let ended = false;
+  /** Where each block's opening fence line starts. */
+  const blockStarts: number[] = [];
   let blockCount = 0;
   let current: Parser | null = null;
 
   const splitter = createFenceSplitter({
     markdown() {},
     markdownTail() {},
-    openUi() {
+    openUi(offset) {
+      blockStarts.push(offset);
       const blockIndex = blockCount++;
       // Mirrors the client parser's wiring (createIncrementalJsxParser).
       current = createParser({
@@ -102,10 +125,23 @@ export function createGenUiValidator(
   });
 
   return {
-    write: (chunk) => splitter.write(chunk),
-    end: () => splitter.end(),
+    write(chunk) {
+      if (ended) return;
+      written += chunk.length;
+      splitter.write(chunk);
+    },
+    end() {
+      ended = true;
+      splitter.end();
+    },
     getIssues: () => issues.slice(),
     getIssueReport: () => formatIssueReport(issues),
+    getCleanOffset() {
+      const firstBad =
+        current === null ? firstIssueBlock : Math.min(firstIssueBlock, blockCount - 1);
+      return firstBad === Infinity ? written : blockStarts[firstBad]!;
+    },
+    getFenceClose: () => splitter.fenceClose(),
   };
 }
 

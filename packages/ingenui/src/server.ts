@@ -8,7 +8,9 @@
  * - builds the system prompt (`formatGenUiPrompt`);
  * - validates the model's stream while passing it through to the client
  *   (`pipeGenUi`), or a complete message (`validateGenUiMessage`), reporting
- *   the same issues the client will — as soon as they are streamed;
+ *   the same issues the client will — as soon as they are streamed — and
+ *   can stop the message on an issue, and continue it with a new response
+ *   (`formatContinuationMessage` asks the model for one);
  * - builds the next request itself from structured client input: fired
  *   actions resolved against the schema (`resolveGenUiAction`) and the issue
  *   report (`formatIssueReport`), instead of trusting client-written text.
@@ -23,8 +25,14 @@ import type { GenUiSchema } from "./schema";
 export { createGenUiValidator, validateGenUiMessage } from "./validator";
 export type { GenUiValidator, GenUiValidatorOptions } from "./validator";
 
-export { pipeGenUi } from "./pipe";
-export type { GenUiPipe, GenUiPipeOptions } from "./pipe";
+export { formatContinuationMessage, pipeGenUi } from "./pipe";
+export type {
+  GenUiContinuation,
+  GenUiPipe,
+  GenUiPipeOptions,
+  GenUiPipeResult,
+  GenUiPipeSnapshot,
+} from "./pipe";
 
 export { formatGenUiPrompt } from "./prompt";
 export type { GenUiPromptOptions } from "./prompt";

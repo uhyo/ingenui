@@ -44,6 +44,11 @@ message streams through it (`pipeGenUi` / `validateGenUiMessage` in
 with `formatIssueReport` instead of accepting report text from the client.
 See [building the next request on the server](./server.md#building-the-next-request-on-the-server).
 
+Since the server sees an issue before the client does, it can also stop the
+model right there and recover — continuing the same message with a
+correction, or rewinding to the last clean boundary. See
+[stopping and recovering](./server.md#stopping-and-recovering).
+
 ## Error containment
 
 Each `ui+jsx` block renders inside its own error boundary

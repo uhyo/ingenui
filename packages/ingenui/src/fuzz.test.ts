@@ -7,6 +7,7 @@ import { bindGenUi } from "./bind";
 import type { GenUiIssue } from "./issues";
 import type { GenUiMessageOptions } from "./message";
 import { createGenUiMessage } from "./message";
+import { pipeGenUi } from "./pipe";
 import { defineGenUiSchema } from "./schema";
 import { createGenUiValidator } from "./validator";
 
@@ -202,5 +203,62 @@ describe("Fuzz — server/client issue parity", () => {
       if (client.length > 0) withIssues++;
     }
     expect(withIssues).toBeGreaterThan(10);
+  }, 30_000);
+});
+
+// Stopping a piped message on an issue — mid-block, wherever the chunk that
+// completes the issue ends — and continuing it with another source must still
+// yield one ordinary message: the server's issues are exactly what the
+// client (and a fresh validator) derive from the forwarded text, for any
+// chunking of that concatenated text.
+
+describe("Fuzz — stopped and continued messages", () => {
+  it("keeps parity and chunk invariance on the concatenated stream", async () => {
+    let stopped = 0;
+    let midBlock = 0;
+    for (let trial = 0; trial < 60; trial++) {
+      const rng = makeRng(trial * 69069 + 5);
+      const first = genDocument(rng);
+      const continuations = [genDocument(rng), genDocument(rng)];
+      const continued = rng() < 0.7; // otherwise stop without a continuation
+      let cutInBlock = false;
+      const pipe = pipeGenUi(chunked(first, randomSplits(rng, first.length)), SCHEMA, {
+        onIssue: (issue, target) => {
+          if (issue.kind === "jsx-error") target.stop();
+        },
+        continuation: continued
+          ? (snapshot) => {
+              // The fence-closing text made the forwarded text diverge from the source.
+              if (snapshot.stops === 1 && !first.startsWith(snapshot.text)) cutInBlock = true;
+              const next = continuations[snapshot.stops - 1];
+              return next === undefined ? null : chunked(next, randomSplits(rng, next.length));
+            }
+          : undefined,
+      });
+      // oxlint-disable-next-line no-await-in-loop
+      const text = await new Response(pipe.stream).text();
+      // oxlint-disable-next-line no-await-in-loop
+      const result = await pipe.done;
+      expect(result.text).toBe(text);
+      if (result.stops > 0) stopped++;
+      if (cutInBlock) midBlock++;
+
+      const piped = result.issues.map(issueKey).toSorted();
+      expect(serverIssues(text, [text.length]), text).toEqual(piped);
+      expect(serverIssues(text, randomSplits(rng, text.length)), text).toEqual(piped);
+      // oxlint-disable-next-line no-await-in-loop
+      expect(await clientIssues(text, randomSplits(rng, text.length)), text).toEqual(piped);
+
+      // The clean boundary is chunking-invariant too, and precedes every broken block.
+      const validator = createGenUiValidator(SCHEMA);
+      validator.write(text);
+      validator.end();
+      expect(validator.getCleanOffset(), text).toBe(result.cleanOffset);
+      if (result.issues.length > 0) {
+        expect(serverIssues(result.cleanText, [result.cleanText.length]), text).toEqual([]);
+      }
+    }
+    expect(stopped).toBeGreaterThan(20);
+    expect(midBlock).toBeGreaterThan(10);
   }, 30_000);
 });
