@@ -212,17 +212,19 @@ describe("createGenUiMessage — issues", () => {
     const message = createGenUiMessage(iterableFrom(["ok\n\n```ui+jsx\n<Boom />\n```\n"]), {
       components: { Boom },
       onIssue: (issue) => issues.push(issue),
-      renderUiError: (blockIndex) => <em>block {blockIndex + 1} hidden</em>,
+      wrapUiBlock: ({ blockIndex, crashed, children }) =>
+        crashed ? <em>block {blockIndex + 1} hidden</em> : children,
     });
     await message.done;
 
-    const { container } = render(<>{message.getSnapshot()}</>);
+    const View = () => <>{useGenUiNode(message)}</>;
+    const { container } = render(<View />);
     expect(container.innerHTML).toBe("<p>ok</p><em>block 1 hidden</em>");
     expect(issues.map((i) => i.kind)).toEqual(["render-error"]);
     expect(message.getIssueReport()).toContain("Rendering crashed: component exploded");
   });
 
-  it("reports a crash that persists across retries only once", async () => {
+  it("keeps a crashed block hidden as the stream grows, reporting the crash once", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const Boom = (): ReactNode => {
       throw new Error("always broken");
@@ -232,7 +234,7 @@ describe("createGenUiMessage — issues", () => {
     const View = () => <>{useGenUiNode(message)}</>;
     render(<View />);
 
-    // Every chunk updates the block, and each update retries the render.
+    // Every chunk updates the block; a crash is final.
     for (const chunk of ["```ui+jsx\n<Boom>a", "b", "c</Boom>\n```\n"]) {
       // oxlint-disable-next-line no-await-in-loop
       await act(async () => {
@@ -247,17 +249,10 @@ describe("createGenUiMessage — issues", () => {
     expect(message.getIssues().map((i) => i.kind)).toEqual(["render-error"]);
   });
 
-  it("retries a crashed block as more of the stream arrives (self-healing)", async () => {
+  it("does not retry a crashed block, even when more of the stream would render", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const Boom = ({ children }: { children?: ReactNode }) => {
-      const text = Children.toArray(children)
-        .filter((child): child is string => typeof child === "string")
-        .join("");
-      if (text === "bad") throw new Error("transiently bad");
-      return <b>{text}</b>;
-    };
     const outer = createPushChannel();
-    const message = createGenUiMessage(outer.source, { components: { Boom } });
+    const message = createGenUiMessage(outer.source, { components: { Boom: CrashesOnBad } });
     const View = () => <>{useGenUiNode(message)}</>;
     const { container } = render(<View />);
 
@@ -276,9 +271,19 @@ describe("createGenUiMessage — issues", () => {
     await act(async () => {
       await message.done;
     });
-    expect(container.innerHTML).toBe("<b>badge</b>");
+    expect(container.innerHTML).toBe("");
+    expect(message.getIssues().map((i) => i.kind)).toEqual(["render-error"]);
   });
 });
+
+/** Crashes while its text children are exactly "bad". */
+function CrashesOnBad({ children }: { children?: ReactNode }) {
+  const text = Children.toArray(children)
+    .filter((child): child is string => typeof child === "string")
+    .join("");
+  if (text === "bad") throw new Error("bad text");
+  return <b>{text}</b>;
+}
 
 /** A wrapper that renders the block's status as attributes, recording each call. */
 function recordingWrapper() {
@@ -355,21 +360,22 @@ describe("createGenUiMessage — wrapUiBlock", () => {
     expect(last(0)?.state).toBe("unterminated");
   });
 
-  it("sees a crash (children is the renderUiError fallback), and the recovery", async () => {
+  it("sees a crash, and can replace children with its own fallback for good", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const Boom = ({ children }: { children?: ReactNode }) => {
-      const text = Children.toArray(children)
-        .filter((child): child is string => typeof child === "string")
-        .join("");
-      if (text === "bad") throw new Error("transiently bad");
-      return <b>{text}</b>;
-    };
-    const { wrapUiBlock } = recordingWrapper();
+    const calls: UiBlockWrapperProps[] = [];
     const outer = createPushChannel();
     const message = createGenUiMessage(outer.source, {
-      components: { Boom },
-      wrapUiBlock,
-      renderUiError: (blockIndex) => <em>block {blockIndex + 1} crashed</em>,
+      components: { Boom: CrashesOnBad },
+      wrapUiBlock: (props) => {
+        calls.push(props);
+        const { blockIndex, issues, crashed, children } = props;
+        if (!crashed) return children;
+        return (
+          <em>
+            block {blockIndex + 1} crashed ({issues.map((i) => i.kind).join()})
+          </em>
+        );
+      },
     });
     const View = () => <>{useGenUiNode(message)}</>;
     const { container } = render(<View />);
@@ -378,25 +384,27 @@ describe("createGenUiMessage — wrapUiBlock", () => {
       outer.push("```ui+jsx\n<Boom>bad");
       await settle();
     });
-    expect(container.innerHTML).toBe(
-      '<div data-block="0" data-state="streaming" data-issues="render-error" data-crashed="true"><em>block 1 crashed</em></div>',
-    );
+    expect(container.innerHTML).toBe("<em>block 1 crashed (render-error)</em>");
+    const callsAtCrash = calls.length;
 
+    // More content would render, but the crash is final; the wrapper is not
+    // called again until the block's state changes.
     await act(async () => {
-      outer.push("ge</Boom>\n```\n");
-      outer.close();
+      outer.push("ge</Boom>");
       await settle();
     });
+    expect(calls).toHaveLength(callsAtCrash);
     await act(async () => {
+      outer.push("\n```\n");
+      outer.close();
       await message.done;
     });
-    // Healed: no longer crashed, but the crash stays on record.
-    expect(container.innerHTML).toBe(
-      '<div data-block="0" data-state="closed" data-issues="render-error" data-crashed="false"><b>badge</b></div>',
-    );
+    expect(container.innerHTML).toBe("<em>block 1 crashed (render-error)</em>");
+    expect(calls.at(-1)).toMatchObject({ state: "closed", crashed: true });
+    expect(message.getIssues().map((i) => i.kind)).toEqual(["render-error"]);
   });
 
-  it("stays crashed without re-rendering the wrapper for a crash that persists", async () => {
+  it("gets the deprecated renderUiError fallback as children after a crash", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const Boom = (): ReactNode => {
       throw new Error("always broken");
@@ -405,12 +413,14 @@ describe("createGenUiMessage — wrapUiBlock", () => {
     const message = createGenUiMessage(iterableFrom(["```ui+jsx\n<Boom />\n```\n"]), {
       components: { Boom },
       wrapUiBlock,
+      // Deprecated, but still the boundary's fallback inside `children`.
+      renderUiError: () => <i>fallback</i>,
     });
     await message.done;
     const View = () => <>{useGenUiNode(message)}</>;
     const { container } = render(<View />);
     expect(container.innerHTML).toBe(
-      '<div data-block="0" data-state="closed" data-issues="render-error" data-crashed="true"></div>',
+      '<div data-block="0" data-state="closed" data-issues="render-error" data-crashed="true"><i>fallback</i></div>',
     );
     // Rendered once before the crash, once after it.
     expect(calls.map((c) => c.crashed)).toEqual([false, true]);

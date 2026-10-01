@@ -6,68 +6,41 @@
  * block is wrapped in one of these so a crash hides **that block only** —
  * never the surrounding Markdown or other blocks — the moment it happens.
  *
- * While the block is still streaming, its content keeps changing; every
- * change bumps `resetKey`, which clears the error state and retries, so a
- * crash caused by a temporarily-truncated tree heals itself as more of the
- * stream arrives. If the final content still crashes, the boundary stays on
- * the fallback and the error is reported through `onError` (which ingenui
- * records as a `render-error` issue for the model). A retry that renders
- * again is reported through `onRecover`.
+ * A crash is final: the boundary stays on the fallback for good, and the
+ * error is reported through `onError` (which ingenui records as a
+ * `render-error` issue for the model). Retrying as more of the stream
+ * arrives would rarely help: an element only appears once its opening tag is
+ * complete, so its props are final; only its children still grow, and a
+ * component that needs them complete can check `useIsElementComplete()`.
  */
 
 import { Component } from "react";
 import type { ReactNode } from "react";
 
 export interface UiBlockErrorBoundaryProps {
-  /** Bump to clear a caught error and re-attempt rendering the children. */
-  resetKey: number;
   /** Rendered in place of the block after a crash (default: nothing). */
   fallback?: ReactNode;
   /** Called once per caught error. */
   onError?: (error: unknown) => void;
-  /** Called when a retry renders the children again after a crash. */
-  onRecover?: () => void;
   children?: ReactNode;
 }
 
 interface UiBlockErrorBoundaryState {
   failed: boolean;
-  lastResetKey: number;
 }
 
 export class UiBlockErrorBoundary extends Component<
   UiBlockErrorBoundaryProps,
   UiBlockErrorBoundaryState
 > {
-  constructor(props: UiBlockErrorBoundaryProps) {
-    super(props);
-    this.state = { failed: false, lastResetKey: props.resetKey };
-  }
+  override state: UiBlockErrorBoundaryState = { failed: false };
 
-  static getDerivedStateFromError(): Partial<UiBlockErrorBoundaryState> {
+  static getDerivedStateFromError(): UiBlockErrorBoundaryState {
     return { failed: true };
-  }
-
-  static getDerivedStateFromProps(
-    props: UiBlockErrorBoundaryProps,
-    state: UiBlockErrorBoundaryState,
-  ): Partial<UiBlockErrorBoundaryState> | null {
-    // New content for the block: retry.
-    if (props.resetKey !== state.lastResetKey) {
-      return { failed: false, lastResetKey: props.resetKey };
-    }
-    return null;
   }
 
   override componentDidCatch(error: unknown): void {
     this.props.onError?.(error);
-  }
-
-  override componentDidUpdate(
-    _prevProps: UiBlockErrorBoundaryProps,
-    prevState: UiBlockErrorBoundaryState,
-  ): void {
-    if (prevState.failed && !this.state.failed) this.props.onRecover?.();
   }
 
   override render(): ReactNode {

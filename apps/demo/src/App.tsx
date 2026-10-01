@@ -330,12 +330,16 @@ function issueLabel(issue: GenUiIssue): string {
  * closing fence) stays on screen, greyed out and labelled — above the
  * corrected block the model writes after a stop. `children` keeps its
  * position whatever the status, so a block that turns broken mid-stream
- * is not remounted.
+ * is not remounted. A crash is final, so a crashed block is simply replaced.
  */
 function UiBlockFrame({ blockIndex, state, issues, crashed, children }: UiBlockWrapperProps) {
+  if (crashed) {
+    return (
+      <div className="ui-callout ui-callout--info">UI block {blockIndex + 1} hidden (crashed)</div>
+    );
+  }
   const problems: string[] = [];
-  if (crashed) problems.push("crashed");
-  else if (issues.length > 0) problems.push(`had ${issues.length} issue(s)`);
+  if (issues.length > 0) problems.push(`had ${issues.length} issue(s)`);
   if (state === "unterminated") problems.push("was cut off");
   const broken = problems.length > 0;
   return (
@@ -427,10 +431,8 @@ function GenUiStreamView({ params }: { params: RunParams }) {
       }
       setIssues((prev) => [...prev, { id: prev.length, message: issueLabel(issue) }]);
     },
-    renderUiError: (blockIndex) => (
-      <div className="ui-callout ui-callout--info">UI block {blockIndex + 1} hidden (crashed)</div>
-    ),
-    // Grey out and label a broken block (e.g. above its correction).
+    // Grey out and label a broken block (e.g. above its correction), and
+    // replace a crashed one.
     wrapUiBlock: (props) => <UiBlockFrame {...props} />,
   });
 

@@ -19,7 +19,6 @@ import { createIncrementalJsxParser } from "@ingenui/incremental-jsx-parser";
 import { UiBlockErrorBoundary } from "./boundary";
 import { createPushChannel } from "./channel";
 import type { GenUiIssue } from "./issues";
-import { describeError } from "./issues";
 
 /**
  * Where a block's source stands:
@@ -44,9 +43,9 @@ export interface UiBlockStatus {
    */
   readonly issues: readonly UiBlockIssue[];
   /**
-   * Whether the block is crashed right now: the error boundary shows the
-   * fallback. A retry that renders again (the block healed as more of the
-   * stream arrived) clears it; its `render-error` stays in `issues`.
+   * Whether the block crashed while rendering: the error boundary shows the
+   * fallback from then on (a crash is final). Its `render-error` is in
+   * `issues`.
    */
   readonly crashed: boolean;
 }
@@ -55,7 +54,9 @@ export interface UiBlockStatus {
 export interface UiBlockWrapperProps extends UiBlockStatus {
   /**
    * The block's default rendering: the live tree inside its error boundary
-   * (showing the `renderUiError` fallback after a crash).
+   * (nothing after a crash, or the deprecated `renderUiError` fallback). A
+   * wrapper may leave it out, e.g. to render its own fallback when
+   * `crashed`.
    */
   readonly children: ReactNode;
 }
@@ -113,28 +114,17 @@ export function createUiBlock(
     onJsxError: (event) => addIssue({ kind: "jsx-error", blockIndex, event }),
   });
 
-  /** Bumped on every parser update; resets the block's error boundary. */
+  /** Bumped on every parser update. */
   let version = 0;
   parser.subscribe(() => {
     version++;
     onUpdate();
   });
 
-  // Report each distinct crash once, not on every retry.
-  let lastRenderError: string | undefined;
   const onRenderError = (error: unknown): void => {
-    const described = describeError(error);
-    if (described !== lastRenderError) {
-      lastRenderError = described;
-      addIssue({ kind: "render-error", blockIndex, error });
-    } else if (status.crashed) {
-      return;
-    }
+    if (status.crashed) return;
+    addIssue({ kind: "render-error", blockIndex, error });
     status = { ...status, crashed: true };
-    onUpdate();
-  };
-  const onRecover = (): void => {
-    status = { ...status, crashed: false };
     onUpdate();
   };
 
@@ -149,15 +139,15 @@ export function createUiBlock(
       }
     },
     render() {
-      if (rendered?.version === version && rendered.status === status) return rendered.node;
+      if (
+        rendered?.status === status &&
+        // A crashed block's tree is no longer shown.
+        (rendered.version === version || status.crashed)
+      ) {
+        return rendered.node;
+      }
       const boundary = (
-        <UiBlockErrorBoundary
-          key={`ui-${blockIndex}`}
-          resetKey={version}
-          fallback={fallback}
-          onError={onRenderError}
-          onRecover={onRecover}
-        >
+        <UiBlockErrorBoundary key={`ui-${blockIndex}`} fallback={fallback} onError={onRenderError}>
           {parser.getSnapshot()}
         </UiBlockErrorBoundary>
       );

@@ -128,9 +128,9 @@ are relative to `packages/ingenui/`:
 | `src/markdown.tsx` | Built-in safe CommonMark-subset renderer (raw HTML stays literal text, URL schemes checked). Pure/total — re-run on a growing region while streaming. Pluggable via `renderMarkdown`. |
 | `src/actions.ts` | The `actions` convention: declared actions → the predefined `actions` variable (typed `"function"`), firing `ActionEvent`s with the canonical next-request `message`. `withActionsVariable` merges it into the variables — the one place both the message runtime and the prompt do so. Dynamic actions (the default; `dynamicActions: false` opts out): a Proxy resolves *any* `actions.<name>` to a notify-only action (`declared: false`) — the model defines actions by referencing them; no host code ever runs for undeclared names. |
 | `src/issues.ts` | `GenUiIssue` union (`jsx-error` / `render-error` / `unclosed-fence`, all per `blockIndex`) + `formatIssueReport` (feedback text for the model). |
-| `src/boundary.tsx` | Per-block error boundary; `resetKey` bumps on each parser update so a crashed block retries as the stream grows (`onError` / `onRecover` report crash and recovery). |
+| `src/boundary.tsx` | Per-block error boundary. A crash is final (no retry: props are final when an element appears, only children grow); `onError` reports it. |
 | `src/message-model.ts` | The message's structure as an immutable value: `createSplitEventCollector` records the splitter's reports as `SplitEvent`s, and `applySplitEvents` (pure reducer) turns each chunk's events into markdown / UI regions. No runtime objects. React-free. |
-| `src/ui-block.tsx` | `createUiBlock`: one block's runtime — push channel → its own `createIncrementalJsxParser`, rendered in a boundary; reports its `jsx-error` / `render-error` issues (each distinct crash once). Keeps its status (`state`, `issues`, `crashed`) as an immutable value for the app's `wrapUiBlock`; `render()` is memoized on (parser version, status) so a settled block keeps its element identity. |
+| `src/ui-block.tsx` | `createUiBlock`: one block's runtime — push channel → its own `createIncrementalJsxParser`, rendered in a boundary; reports its `jsx-error` / `render-error` issues (each distinct crash once). Keeps its status (`state`, `issues`, `crashed`) as an immutable value for the app's `wrapUiBlock`; `render()` is memoized on (parser version, status), ignoring the version once crashed, so a settled block keeps its element identity. |
 | `src/message.tsx` | `createGenUiMessage`: the imperative shell — pumps the source through the splitter into the model (reducer) and the block runtimes (one merged write per block per chunk), collects issues, and renders (`renderMessage`, per-region Markdown memoization) into a `useSyncExternalStore`-shaped store. |
 | `src/prompt.ts` | `formatGenUiPrompt`: message format + actions (with descriptions) + the parser's `formatPromptContract`. Takes a `GenUiSchema` or the client options. |
 | `src/schema.ts` | `./schema` entry: `GenUiSchema`, the parse-affecting options as plain data (elements, component prop catalogs + descriptions, `variableTypes`, actions, `dynamicActions`, `mismatchedTag`), + `defineGenUiSchema` (identity; keeps literal types). Shared by server and client. |
@@ -141,8 +141,8 @@ are relative to `packages/ingenui/`:
 
 Invariants: chunk independence end-to-end (its own fuzz suite); markdown
 regions and UI blocks keep stable element identities once settled; a crashed
-UI block never takes down the message (boundary + retry, with the app's
-`wrapUiBlock` outside the boundary); issues are the only error channel
+UI block never takes down the message (the boundary, with the app's
+`wrapUiBlock` outside it); issues are the only error channel
 (`onJsxError` is not exposed); **server/client parity**: for the same text and
 schema, the server validator reports exactly the client's parse-time issues
 (`jsx-error` and `unclosed-fence`; only `render-error` is client-only),

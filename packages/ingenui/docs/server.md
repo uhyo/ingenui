@@ -59,7 +59,7 @@ export const schema = defineGenUiSchema({
 The rule for what goes where: anything that changes **parse results** is in
 the schema. Options that only affect **rendering** (`Pending`,
 `onUnknownComponent`, `onDisallowedElement`, `renderMarkdown`,
-`renderUiError`, `wrapUiBlock`) stay client-side.
+`wrapUiBlock`) stay client-side.
 
 `defineGenUiSchema` does nothing at runtime. At the type level it keeps the
 literal shape, which is what lets `bindGenUi` check the bindings.

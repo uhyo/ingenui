@@ -34,10 +34,9 @@ Let me know if you have questions!
 - **Self-correcting** — parse errors, render crashes, and unclosed fences are
   collected as issues and formatted into a feedback report for the model.
 - **Errors never blank the message** — each UI block sits in its own error
-  boundary; Markdown and other blocks keep working, and a block that crashed
-  on partially-streamed content retries as more arrives. `wrapUiBlock` lets
-  the app mark a broken block (grey it out, collapse it) above its
-  correction.
+  boundary, so Markdown and other blocks keep working. `wrapUiBlock` lets
+  the app mark a broken block (grey it out, collapse it, show a fallback),
+  e.g. above its correction.
 - **Safe for untrusted output** — allowlisted components/elements, typed
   props, and a built-in Markdown renderer that never renders raw HTML.
 - **Prompt included** — `formatGenUiPrompt` tells the model the message

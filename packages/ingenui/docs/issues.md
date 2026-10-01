@@ -56,12 +56,17 @@ Each `ui+jsx` block renders inside its own error boundary
 
 - A render-time crash hides **that block only** — the surrounding Markdown
   and other blocks are unaffected — and records a `render-error` issue.
-- While the block is still streaming, every new chunk retries the block, so a
-  crash caused by partially-arrived content heals itself.
-- `renderUiError` supplies a fallback (an "invalid UI" note, for instance);
-  by default the crashed block renders as nothing.
-- `wrapUiBlock` wraps every block with your own markup, aware of its issues
-  and state (below).
+- A crash is final: the block stays hidden for the rest of the message,
+  even as more of it streams in. Retrying would rarely help, since an
+  element only appears once its opening tag is complete (its props are
+  final). Only its children still grow, and a component that needs them
+  complete can check `useIsElementComplete()`.
+- `wrapUiBlock` (below) can show a fallback for a crashed block (an
+  "invalid UI" note, for instance); by default it renders as nothing.
+
+A failing stream *source* (network error) is separate: `onStreamError` fires
+once, `done` rejects, and the content received so far stays rendered, with
+open blocks finalized best-effort.
 
 ## Wrapping UI blocks
 
@@ -97,24 +102,20 @@ createGenUiMessage(source, {
 - `issues` holds the block's `jsx-error` and `render-error` issues so far,
   updated as they arrive. An unclosed fence is not in the list; it shows as
   `state: "unterminated"`.
-- `crashed` is `true` while the block's error boundary shows the fallback
-  (`children` is then the `renderUiError` fallback). A block that heals as
-  more of the stream arrives clears it; its `render-error` stays in
-  `issues`.
+- `crashed` turns `true` when the block crashes while rendering, and stays
+  `true`. `children` then renders nothing, so return your fallback instead.
 
 The built-in error boundary stays inside `children`, so a crashing block
-still never takes down the message and keeps retrying while it streams. The
-wrapper itself is your code and runs outside the boundary.
+still never takes down the message. The wrapper itself is your code and
+runs outside the boundary.
 
 The wrapper is called again only when the block's tree or status changes, so
-a settled block keeps its element identity. To keep the block's component
-state (an input's value, for instance), keep `children` at the same position
-in your markup when the status changes: switching between returning
-`children` bare and inside a `<details>` remounts it.
+a settled block keeps its element identity (a crashed block counts as
+settled). To keep the block's component state (an input's value, for
+instance), keep `children` at the same position in your markup when the
+status changes: switching between returning `children` bare and inside a
+`<details>` remounts it.
 
-`renderUiError` is a shorthand for the common case: it only sets the crash
-fallback. Use both to customize the fallback and wrap it.
-
-A failing stream *source* (network error) is separate: `onStreamError` fires
-once, `done` rejects, and the content received so far stays rendered, with
-open blocks finalized best-effort.
+`renderUiError` is **deprecated**: it sets the boundary's fallback, which a
+wrapper now covers with `crashed ? fallback : children`. It still works, and
+its fallback is what `children` renders after a crash.

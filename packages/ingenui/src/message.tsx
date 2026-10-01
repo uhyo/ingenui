@@ -107,17 +107,20 @@ export interface GenUiMessageOptions extends Omit<
   /**
    * Rendered in place of a `ui+jsx` block whose UI crashed at render time
    * (default: nothing — the block is hidden). Called once per block, when it
-   * opens. A shorthand for the common case of {@link GenUiMessageOptions.wrapUiBlock}, which
-   * receives this fallback as `children` after a crash.
+   * opens.
+   *
+   * @deprecated Use {@link GenUiMessageOptions.wrapUiBlock}:
+   * `({ blockIndex, crashed, children }) => crashed ? fallback : children`.
    */
   renderUiError?: ((blockIndex: number) => ReactNode) | undefined;
   /**
    * Wrap each `ui+jsx` block's rendering, e.g. to collapse or grey out a
-   * block with issues. Receives the block's status — `blockIndex`, `state`
-   * (`"streaming"` / `"closed"` / `"unterminated"`), its `jsx-error` /
-   * `render-error` `issues` so far, whether it is `crashed` right now — and
-   * `children`, the default rendering. The built-in error boundary stays
-   * inside `children`; the wrapper itself is host code and is not guarded.
+   * block with issues, or to show a fallback for a crashed one. Receives the
+   * block's status — `blockIndex`, `state` (`"streaming"` / `"closed"` /
+   * `"unterminated"`), its `jsx-error` / `render-error` `issues` so far,
+   * whether it `crashed` (final) — and `children`, the default rendering.
+   * The built-in error boundary stays inside `children`; the wrapper itself
+   * is host code and is not guarded.
    *
    * Called again only when the block's tree or status changes: a settled
    * block keeps its element identity.
