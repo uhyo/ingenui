@@ -56,11 +56,66 @@ Each `ui+jsx` block renders inside its own error boundary
 
 - A render-time crash hides **that block only** — the surrounding Markdown
   and other blocks are unaffected — and records a `render-error` issue.
-- While the block is still streaming, every new chunk retries the block, so a
-  crash caused by partially-arrived content heals itself.
-- `renderUiError` supplies a fallback (an "invalid UI" note, for instance);
-  by default the crashed block renders as nothing.
+- A crash is final: the block stays hidden for the rest of the message,
+  even as more of it streams in. Retrying would rarely help, since an
+  element only appears once its opening tag is complete (its props are
+  final). Only its children still grow, and a component that needs them
+  complete can check `useIsElementComplete()`.
+- `wrapUiBlock` (below) can show a fallback for a crashed block (an
+  "invalid UI" note, for instance); by default it renders as nothing.
 
 A failing stream *source* (network error) is separate: `onStreamError` fires
 once, `done` rejects, and the content received so far stays rendered, with
 open blocks finalized best-effort.
+
+## Wrapping UI blocks
+
+A block with parse-time issues still renders whatever parsed. That is often
+fine, but sometimes the app wants to show that the block is broken — most of
+all when the server [stopped the model and continued the
+message](./server.md#continuing-the-same-message): the broken partial block
+stays in the message, followed by the model's corrected one.
+
+`wrapUiBlock` wraps each block's rendering. It receives the block's status
+and the default rendering as `children`:
+
+```tsx
+createGenUiMessage(source, {
+  ...genUi,
+  wrapUiBlock: ({ issues, state, crashed, children }) => {
+    if (crashed) return <p className="ui-note">This UI could not be shown.</p>;
+    if (issues.length === 0 && state !== "unterminated") return children;
+    return (
+      <details className="ui-broken">
+        <summary>This UI had problems — a corrected version follows</summary>
+        {children}
+      </details>
+    );
+  },
+});
+```
+
+- `state` is `"streaming"` while the block's fence is open, `"closed"` once
+  its closing fence arrives, and `"unterminated"` when the message ended
+  without one (the stream ended or failed, or the server stopped it
+  mid-block without a continuation).
+- `issues` holds the block's `jsx-error` and `render-error` issues so far,
+  updated as they arrive. An unclosed fence is not in the list; it shows as
+  `state: "unterminated"`.
+- `crashed` turns `true` when the block crashes while rendering, and stays
+  `true`. `children` then renders nothing, so return your fallback instead.
+
+The built-in error boundary stays inside `children`, so a crashing block
+still never takes down the message. The wrapper itself is your code and
+runs outside the boundary.
+
+The wrapper is called again only when the block's tree or status changes, so
+a settled block keeps its element identity (a crashed block counts as
+settled). To keep the block's component state (an input's value, for
+instance), keep `children` at the same position in your markup when the
+status changes: switching between returning `children` bare and inside a
+`<details>` remounts it.
+
+`renderUiError` is **deprecated**: it sets the boundary's fallback, which a
+wrapper now covers with `crashed ? fallback : children`. It still works, and
+its fallback is what `children` renders after a crash.

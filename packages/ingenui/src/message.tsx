@@ -6,7 +6,8 @@
  * `splitter.ts`); Markdown regions render through the (pluggable) Markdown
  * renderer, and each `ui+jsx` block is piped into its own
  * `createIncrementalJsxParser` so it streams with a live `<Pending />`
- * frontier, wrapped in a per-block error boundary.
+ * frontier, wrapped in a per-block error boundary (and, optionally, the
+ * app's own block wrapper).
  *
  * The returned store is shaped like the underlying parser's — a drop-in for
  * `useSyncExternalStore` — plus the feedback surface: every parse error,
@@ -48,7 +49,7 @@ import {
   endMessage,
 } from "./message-model";
 import { createFenceSplitter } from "./splitter";
-import type { UiBlock } from "./ui-block";
+import type { UiBlock, UiBlockWrapperProps } from "./ui-block";
 import { createUiBlock } from "./ui-block";
 
 /** Passed to a custom {@link GenUiMessageOptions.renderMarkdown}. */
@@ -105,9 +106,26 @@ export interface GenUiMessageOptions extends Omit<
   renderMarkdown?: ((markdown: string, context: MarkdownRenderContext) => ReactNode) | undefined;
   /**
    * Rendered in place of a `ui+jsx` block whose UI crashed at render time
-   * (default: nothing — the block is hidden).
+   * (default: nothing — the block is hidden). Called once per block, when it
+   * opens.
+   *
+   * @deprecated Use {@link GenUiMessageOptions.wrapUiBlock}:
+   * `({ blockIndex, crashed, children }) => crashed ? fallback : children`.
    */
   renderUiError?: ((blockIndex: number) => ReactNode) | undefined;
+  /**
+   * Wrap each `ui+jsx` block's rendering, e.g. to collapse or grey out a
+   * block with issues, or to show a fallback for a crashed one. Receives the
+   * block's status — `blockIndex`, `state` (`"streaming"` / `"closed"` /
+   * `"unterminated"`), its `jsx-error` / `render-error` `issues` so far,
+   * whether it `crashed` (final) — and `children`, the default rendering.
+   * The built-in error boundary stays inside `children`; the wrapper itself
+   * is host code and is not guarded.
+   *
+   * Called again only when the block's tree or status changes: a settled
+   * block keeps its element identity.
+   */
+  wrapUiBlock?: ((props: UiBlockWrapperProps) => ReactNode) | undefined;
 }
 
 /**
@@ -131,8 +149,6 @@ export interface GenUiMessage extends IncrementalJsxParser {
 interface MessageView {
   /** A markdown region; `streaming` when it holds the stream's frontier. */
   markdown(region: MarkdownRegion, streaming: boolean): ReactNode;
-  /** The fallback for a crashed `ui+jsx` block. */
-  uiError(blockIndex: number): ReactNode;
   /** The frontier placeholder shown after a streaming markdown region. */
   Pending: ComponentType<unknown> | undefined;
 }
@@ -148,7 +164,7 @@ function renderMessage(
   for (let i = 0; i < regions.length; i++) {
     const region = regions[i]!;
     if (region.kind === "ui") {
-      children.push(blocks[region.blockIndex]!.render(view.uiError(region.blockIndex)));
+      children.push(blocks[region.blockIndex]!.render());
     } else if (region.committed !== "" || region.tail !== "") {
       // Only the last region can still grow.
       children.push(view.markdown(region, streaming && i === regions.length - 1));
@@ -199,6 +215,7 @@ export function createGenUiMessage(
     onStreamError,
     renderMarkdown = renderMarkdownDefault,
     renderUiError,
+    wrapUiBlock,
     ...rest
   } = options;
   const parserOptions: IncrementalJsxParserOptions = withActionsVariable(rest);
@@ -235,7 +252,12 @@ export function createGenUiMessage(
       switch (event.type) {
         case "openUi":
           blocks.push(
-            createUiBlock(blocks.length, parserOptions, { onIssue: recordIssue, onUpdate: bump }),
+            createUiBlock(
+              blocks.length,
+              parserOptions,
+              { onIssue: recordIssue, onUpdate: bump },
+              { fallback: renderUiError?.(blocks.length) ?? null, wrap: wrapUiBlock },
+            ),
           );
           break;
         case "ui":
@@ -243,7 +265,7 @@ export function createGenUiMessage(
           break;
         case "closeUi":
           flushUi();
-          blocks.at(-1)?.close();
+          blocks.at(-1)?.close(event.terminated);
           if (!event.terminated) {
             recordIssue({ kind: "unclosed-fence", blockIndex: blocks.length - 1 });
           }
@@ -255,7 +277,6 @@ export function createGenUiMessage(
 
   const view: MessageView = {
     markdown: memoizeMarkdown(renderMarkdown),
-    uiError: (blockIndex) => renderUiError?.(blockIndex) ?? null,
     Pending: parserOptions.Pending,
   };
 
@@ -291,7 +312,7 @@ export function createGenUiMessage(
     (error: unknown) => {
       // Finalize the open block best-effort so its parser settles; the
       // received content stays rendered.
-      if (model.inUi) blocks.at(-1)?.close();
+      if (model.inUi) blocks.at(-1)?.close(false);
       model = endMessage(model);
       onStreamError?.(error);
       bump();
@@ -308,7 +329,7 @@ export function createGenUiMessage(
     },
     dispose() {
       handle.cancel();
-      blocks.at(-1)?.close();
+      blocks.at(-1)?.close(false);
       for (const block of blocks) block.dispose();
     },
     done,

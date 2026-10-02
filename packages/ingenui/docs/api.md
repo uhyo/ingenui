@@ -49,7 +49,8 @@ They are forwarded to every `ui+jsx` block's parser. In addition:
 | `onAction`       | `(event: ActionEvent) => void`        | Fired when the user triggers an action. `event.message` is the canonical next-request text; `event.declared` distinguishes host-declared from model-defined actions. |
 | `onIssue`        | `(issue: GenUiIssue) => void`         | Fired for every issue as it is found (issues also accumulate on the message). See [issues](./issues.md). |
 | `renderMarkdown` | `(markdown: string, context: { streaming: boolean }) => ReactNode` | Replace the built-in [Markdown renderer](./markdown.md). `streaming` is `true` while the region holds the stream's frontier. |
-| `renderUiError`  | `(blockIndex: number) => ReactNode`   | Rendered in place of a block whose UI crashed (default: nothing — the block is hidden). |
+| `wrapUiBlock`    | `(props: UiBlockWrapperProps) => ReactNode` | Wraps each block's rendering, e.g. to collapse or grey out a block with issues, or to show a fallback for a crashed one. See [wrapping UI blocks](./issues.md#wrapping-ui-blocks). |
+| `renderUiError`  | `(blockIndex: number) => ReactNode`   | **Deprecated** — use `wrapUiBlock` (`crashed ? fallback : children`). Rendered in place of a block whose UI crashed (default: nothing). Called once per block, when it opens. |
 
 With a [shared schema](./server.md), the parse-affecting options (`elements`,
 `components`, `variables`, `variableTypes`, `actions`, `dynamicActions`,
@@ -58,6 +59,23 @@ instead. Spread its result and add the client-only ones.
 
 `onJsxError` is not an option here — the parser's structured errors flow into
 the issue channel instead (`onIssue` / `getIssues`).
+
+### `wrapUiBlock`
+
+Called with the block's status and its default rendering:
+
+| Prop         | Type | Description |
+| ------------ | ---- | ----------- |
+| `blockIndex` | `number` | 0-based, in document order (the issues' `blockIndex`). |
+| `state`      | `"streaming" \| "closed" \| "unterminated"` | The block's fence is still open; it was closed; or the message ended without closing it (the stream ended or failed, or the server stopped it mid-block). |
+| `issues`     | `readonly UiBlockIssue[]` | The block's `jsx-error` and `render-error` issues so far, in the order found (the same objects `getIssues()` returns). An unclosed fence shows as `state: "unterminated"`. |
+| `crashed`    | `boolean` | Whether the block crashed while rendering. Final: a crashed block is not retried, and `children` renders nothing (or the deprecated `renderUiError` fallback). |
+| `children`   | `ReactNode` | The default rendering: the live tree inside the block's error boundary. The wrapper may leave it out (e.g. when `crashed`). |
+
+The types are exported as `UiBlockWrapperProps`, `UiBlockStatus`,
+`UiBlockState`, and `UiBlockIssue`. The wrapper is called again only when
+the block's tree or status changes. See [wrapping UI
+blocks](./issues.md#wrapping-ui-blocks) for an example.
 
 ## `useGenUiMessage(source, options?)` — `ingenui/react`
 

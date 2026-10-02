@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIncrementalJsx } from "@ingenui/incremental-jsx-parser/react";
-import type { GenUiIssue } from "ingenui";
+import type { GenUiIssue, UiBlockWrapperProps } from "ingenui";
 import { useGenUiMessage } from "ingenui/react";
 
 import type { Recovery } from "./api";
@@ -325,6 +325,35 @@ function issueLabel(issue: GenUiIssue): string {
   }
 }
 
+/**
+ * The demo's `wrapUiBlock`: a block with issues (or cut off before its
+ * closing fence) stays on screen, greyed out and labelled — above the
+ * corrected block the model writes after a stop. `children` keeps its
+ * position whatever the status, so a block that turns broken mid-stream
+ * is not remounted. A crash is final, so a crashed block is simply replaced.
+ */
+function UiBlockFrame({ blockIndex, state, issues, crashed, children }: UiBlockWrapperProps) {
+  if (crashed) {
+    return (
+      <div className="ui-callout ui-callout--info">UI block {blockIndex + 1} hidden (crashed)</div>
+    );
+  }
+  const problems: string[] = [];
+  if (issues.length > 0) problems.push(`had ${issues.length} issue(s)`);
+  if (state === "unterminated") problems.push("was cut off");
+  const broken = problems.length > 0;
+  return (
+    <div className={`ui-block${broken ? " ui-block--broken" : ""}`}>
+      {broken && (
+        <div className="ui-block__label">
+          ⚠ UI block {blockIndex + 1} {problems.join(" and ")}. Kept for reference.
+        </div>
+      )}
+      <div className="ui-block__body">{children}</div>
+    </div>
+  );
+}
+
 /** The system prompt, as the server builds it from the shared schema. */
 function SystemPrompt() {
   const [prompt, setPrompt] = useState<string | null>(null);
@@ -402,9 +431,9 @@ function GenUiStreamView({ params }: { params: RunParams }) {
       }
       setIssues((prev) => [...prev, { id: prev.length, message: issueLabel(issue) }]);
     },
-    renderUiError: (blockIndex) => (
-      <div className="ui-callout ui-callout--info">UI block {blockIndex + 1} hidden (crashed)</div>
-    ),
+    // Grey out and label a broken block (e.g. above its correction), and
+    // replace a crashed one.
+    wrapUiBlock: (props) => <UiBlockFrame {...props} />,
   });
 
   // When the message completes, ask the server for the feedback it would
