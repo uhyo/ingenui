@@ -4,7 +4,7 @@ An interactive playground for the workspace libraries. It streams a source
 **a few characters at a time** (the way an LLM streams tokens) and renders the
 resulting **live React tree** side-by-side with the raw text. Everything that
 hasn't arrived yet is the single `<Pending />` frontier, shown here as a
-shimmer. Two modes:
+shimmer. Three modes:
 
 - **ingenui · Markdown + ui+jsx** (default) — streams a
   [`ingenui`](../../packages/ingenui) message **through the demo's server**:
@@ -13,6 +13,13 @@ shimmer. Two modes:
   AI**, built by the server from the action's name. Action names may be
   model-defined (dynamic actions, the default). A malformed sample shows the
   **feedback report** the server built for the model.
+- **ingenui · chat with Claude** — the same pipeline with a **real model**:
+  a chat with Claude as a shopping assistant. Its replies stream through the
+  server's `pipeGenUi` (which can abort the request on a broken block and ask
+  Claude to continue with a corrected one), and clicking a button wired to
+  `actions.*` sends the next turn — composed by the server, with feedback on
+  the previous reply attached. Needs an
+  [API key](#claude-api-key).
 - **parser · raw JSX** — streams a bare JSX string straight into
   [`@ingenui/incremental-jsx-parser`](../../packages/incremental-jsx-parser).
 
@@ -75,6 +82,24 @@ pnpm --filter ingenui-demo dev
 Then open the printed URL. Pick a sample (or edit the JSX), choose a speed, and
 press **Stream it**.
 
+### Claude API key
+
+The chat mode calls the Claude API from the server side (`/api/chat`, in
+[`worker/claude.ts`](./worker/claude.ts)); the key never reaches the
+browser. Put it in `apps/demo/.env.local` (gitignored; see
+[`.env.example`](./.env.example)), which both `vite dev` and `wrangler dev`
+read:
+
+```sh
+ANTHROPIC_API_KEY=sk-ant-…
+# ANTHROPIC_MODEL=claude-opus-5-5   # optional override
+```
+
+Without a key, the other modes work as before and the chat mode says it
+isn't configured. Requests use `claude-opus-5-5` at `effort: "low"` (fast
+first tokens for a chat turn), `max_tokens: 8192`, prompt caching on the
+system prompt, and the server-side refusal fallback (`fallbacks: "default"`).
+
 ## Deploy (Cloudflare Workers)
 
 The demo ships as a Worker with
@@ -85,10 +110,20 @@ built `dist/`. The config is in [`wrangler.jsonc`](./wrangler.jsonc).
 `not_found_handling: "single-page-application"` rewrites unknown paths to
 `index.html`.
 
-There is no API key: the Worker's "LLM provider" is simulated, replaying the
-text from the editor a few characters at a time. A real app would call the
-provider with the server-built prompt and pass its text stream to
-`pipeGenUi` the same way.
+The sample modes need no API key: their "LLM provider" is simulated,
+replaying the text from the editor a few characters at a time. The chat mode
+calls Claude, so give the deployed Worker the key as a secret:
+
+```sh
+pnpm exec wrangler secret put ANTHROPIC_API_KEY
+```
+
+A public demo spends your API credit on every visitor's message. The Worker
+limits `/api/chat` to 6 requests per minute per client IP (the
+`CHAT_RATE_LIMIT` [rate limiting binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+in `wrangler.jsonc`), caps the conversation's size, and aborts a request as
+soon as the client disconnects or the server stops the message; also set a
+spend limit for the key's workspace in the Claude Console.
 
 One-time auth (either works):
 
@@ -120,6 +155,15 @@ export const demoSchema = defineGenUiSchema({ components: { Card: { props: {} },
 // worker/index.ts — the server
 const pipe = pipeGenUi(simulatedModelStream, demoSchema, { onIssue: log });
 return new Response(pipe.stream);
+
+// … and with Claude (`/api/chat`): its text deltas are the source; stopping
+// cancels it, which aborts the request; a continuation is a new request.
+const call = callClaude({ client, model, system: systemPrompt, messages });
+const pipe = pipeGenUi(call.text, demoSchema, {
+  onIssue: (issue, pipe) => issue.kind === "jsx-error" && pipe.stop(),
+  continuation: (snapshot) =>
+    callClaude({ …, messages: [...messages, { role: "user", content: formatContinuationMessage(snapshot.text, snapshot.issueReport) }] }).text,
+});
 
 // src/components.tsx + App.tsx — the client
 const genUi = bindGenUi(demoSchema, { components: { Card, … } });

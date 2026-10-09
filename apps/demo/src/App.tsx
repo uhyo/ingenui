@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIncrementalJsx } from "@ingenui/incremental-jsx-parser/react";
-import type { GenUiIssue, UiBlockWrapperProps } from "ingenui";
 import { useGenUiMessage } from "ingenui/react";
 
 import type { Recovery } from "./api";
 import { fetchNextTurn, fetchSystemPrompt, streamGeneration } from "./api";
+import { ClaudeChat } from "./ClaudeChat";
 import { componentNames, demoComponents, genUi, Shimmer } from "./components";
 import { jsxSamples, markdownSamples, type Sample } from "./samples";
 import { createCharStream } from "./streaming";
+import { issueLabel, UiBlockFrame } from "./ui-block-frame";
 
-type Mode = "genui" | "jsx";
+type Mode = "claude" | "genui" | "jsx";
 
 interface ModeInfo {
   id: Mode;
@@ -20,6 +21,7 @@ interface ModeInfo {
 
 const MODES: ModeInfo[] = [
   { id: "genui", label: "ingenui · Markdown + ui+jsx", samples: markdownSamples },
+  { id: "claude", label: "ingenui · chat with Claude", samples: [] },
   { id: "jsx", label: "parser · raw JSX", samples: jsxSamples },
 ];
 
@@ -52,13 +54,14 @@ export function App() {
   const [recovery, setRecovery] = useState<Recovery>("continue");
   const [correction, setCorrection] = useState<string | undefined>(undefined);
   const [run, setRun] = useState<RunParams | null>(null);
+  const [chatKey, setChatKey] = useState(0);
 
   const modeInfo = MODES.find((m) => m.id === mode)!;
 
   const switchMode = (next: ModeInfo) => {
     if (next.id === mode) return;
     setMode(next.id);
-    loadSample(next.samples[0]!);
+    if (next.samples[0]) loadSample(next.samples[0]);
   };
 
   const loadSample = (sample: Sample) => {
@@ -99,8 +102,9 @@ export function App() {
           A streamed message becomes a <strong>live React tree</strong>. In ingenui mode the stream
           is Markdown where <code>```ui+jsx</code> code fences render as interactive UI (with{" "}
           <code>actions.*</code> wiring events back to the conversation); in parser mode it is raw
-          JSX. Either way, what has not arrived yet is a single <code>&lt;Pending /&gt;</code>{" "}
-          shimmer at the streaming frontier, and components can ask{" "}
+          JSX. The chat mode puts a real model behind it: Claude writes the message, and clicking
+          its UI sends the next turn. Either way, what has not arrived yet is a single{" "}
+          <code>&lt;Pending /&gt;</code> shimmer at the streaming frontier, and components can ask{" "}
           <code>useIsElementComplete()</code> whether their own children are still arriving — cards
           glow while open, badges and buttons hide the shimmer (and buttons stay disabled) until
           their label is final.
@@ -124,38 +128,42 @@ export function App() {
         </div>
 
         <div className="panel__toolbar">
-          <label className="field">
-            <span>Sample</span>
-            <select
-              value=""
-              onChange={(e) => {
-                const sample = modeInfo.samples.find((s) => s.id === e.target.value);
-                if (sample) loadSample(sample);
-              }}
-            >
-              <option value="" disabled>
-                Load a sample…
-              </option>
-              {modeInfo.samples.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {mode !== "claude" && (
+            <>
+              <label className="field">
+                <span>Sample</span>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const sample = modeInfo.samples.find((s) => s.id === e.target.value);
+                    if (sample) loadSample(sample);
+                  }}
+                >
+                  <option value="" disabled>
+                    Load a sample…
+                  </option>
+                  {modeInfo.samples.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label className="field">
-            <span>Speed</span>
-            <select value={speedIndex} onChange={(e) => setSpeedIndex(Number(e.target.value))}>
-              {SPEEDS.map((s, i) => (
-                <option key={s.label} value={i}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label className="field">
+                <span>Speed</span>
+                <select value={speedIndex} onChange={(e) => setSpeedIndex(Number(e.target.value))}>
+                  {SPEEDS.map((s, i) => (
+                    <option key={s.label} value={i}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
 
-          {mode === "genui" && (
+          {mode !== "jsx" && (
             <label className="field">
               <span>On issue</span>
               <select value={recovery} onChange={(e) => setRecovery(e.target.value as Recovery)}>
@@ -168,23 +176,41 @@ export function App() {
             </label>
           )}
 
-          <button className="run" type="button" onClick={startStream}>
-            {run ? "↻ Replay stream" : "▶ Stream it"}
-          </button>
+          {mode === "claude" ? (
+            <button className="run" type="button" onClick={() => setChatKey((k) => k + 1)}>
+              New chat
+            </button>
+          ) : (
+            <button className="run" type="button" onClick={startStream}>
+              {run ? "↻ Replay stream" : "▶ Stream it"}
+            </button>
+          )}
         </div>
 
-        <textarea
-          className="editor"
-          spellCheck={false}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          aria-label="Source to stream"
-        />
+        {mode !== "claude" && (
+          <textarea
+            className="editor"
+            spellCheck={false}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            aria-label="Source to stream"
+          />
+        )}
         <p className="hint">
           Allowed components (the parser doubles as a security allowlist):{" "}
           {componentNames.map((n) => (
             <code key={n}>{n}</code>
           ))}
+          {mode === "claude" && (
+            <>
+              {" "}
+              — Claude gets the system prompt below (built from the same schema), and its reply is
+              streamed back through <code>pipeGenUi</code>. On a JSX issue, the server can abort the
+              request and ask Claude to continue the same message with a corrected block. Clicking a
+              button wired to <code>actions.*</code> sends the next turn, with feedback on the
+              previous reply attached by the server.
+            </>
+          )}
           {mode === "genui" && (
             <>
               {" "}
@@ -196,10 +222,12 @@ export function App() {
             </>
           )}
         </p>
-        {mode === "genui" && <SystemPrompt />}
+        {mode !== "jsx" && <SystemPrompt />}
       </section>
 
-      {run ? (
+      {mode === "claude" ? (
+        <ClaudeChat key={chatKey} recovery={recovery} />
+      ) : run && run.mode === mode ? (
         run.mode === "genui" ? (
           <GenUiStreamView key={run.key} params={run} />
         ) : (
@@ -308,49 +336,6 @@ function JsxStreamView({ params }: { params: RunParams }) {
         </div>
       )}
     </section>
-  );
-}
-
-function issueLabel(issue: GenUiIssue): string {
-  const block = `block ${issue.blockIndex + 1}`;
-  switch (issue.kind) {
-    case "jsx-error":
-      return `${block}: ${issue.event.message}`;
-    case "render-error":
-      return `${block}: rendering crashed (${
-        issue.error instanceof Error ? issue.error.message : String(issue.error)
-      })`;
-    case "unclosed-fence":
-      return `${block}: the ui+jsx fence was never closed`;
-  }
-}
-
-/**
- * The demo's `wrapUiBlock`: a block with issues (or cut off before its
- * closing fence) stays on screen, greyed out and labelled — above the
- * corrected block the model writes after a stop. `children` keeps its
- * position whatever the status, so a block that turns broken mid-stream
- * is not remounted. A crash is final, so a crashed block is simply replaced.
- */
-function UiBlockFrame({ blockIndex, state, issues, crashed, children }: UiBlockWrapperProps) {
-  if (crashed) {
-    return (
-      <div className="ui-callout ui-callout--info">UI block {blockIndex + 1} hidden (crashed)</div>
-    );
-  }
-  const problems: string[] = [];
-  if (issues.length > 0) problems.push(`had ${issues.length} issue(s)`);
-  if (state === "unterminated") problems.push("was cut off");
-  const broken = problems.length > 0;
-  return (
-    <div className={`ui-block${broken ? " ui-block--broken" : ""}`}>
-      {broken && (
-        <div className="ui-block__label">
-          ⚠ UI block {blockIndex + 1} {problems.join(" and ")}. Kept for reference.
-        </div>
-      )}
-      <div className="ui-block__body">{children}</div>
-    </div>
   );
 }
 

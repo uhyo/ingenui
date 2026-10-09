@@ -9,16 +9,20 @@
  *   `pipeGenUi`, validating it on the way — and, on a JSX issue, stopping the
  *   "model" and continuing the same message with a correction (or just
  *   stopping it, or only logging, per the request's `recovery`);
+ * - `POST /api/chat`     — the same, with **Claude** as the model: streams
+ *   its reply to a conversation through `pipeGenUi`, and on a JSX issue
+ *   aborts the request and continues the message with a new one built with
+ *   `formatContinuationMessage`. Needs `ANTHROPIC_API_KEY`;
+ * - `GET  /api/config`   — whether Claude is configured (and which model);
  * - `POST /api/next`     — builds the next user turn from *structured*
- *   client input (a fired action's name, render crashes), re-validating the
- *   previous message itself instead of trusting client-written text.
+ *   client input (typed text, a fired action's name, render crashes),
+ *   re-validating the previous message itself instead of trusting
+ *   client-written text.
  *
- * The demo has no API key, so the "LLM provider" is simulated: it replays the
- * text the user typed, a few characters at a time. A real app would call the
- * provider with the prompt from `/api/prompt` and pipe its text stream the
- * same way; asked to continue after a stop (the request a real app builds
- * with `formatContinuationMessage`), the simulated model writes the sample's
- * correction, then carries on after the broken block.
+ * `/api/generate` needs no API key: its "LLM provider" is simulated, replaying
+ * the text the user typed a few characters at a time; asked to continue
+ * after a stop, the simulated model writes the sample's correction, then
+ * carries on after the broken block. `/api/chat` is the real thing.
  *
  * In `vite dev` the same handler is served by a middleware (see
  * `vite.config.ts`); `wrangler dev` / `wrangler deploy` run it as the Worker.
@@ -33,13 +37,38 @@ import {
   validateGenUiMessage,
 } from "ingenui/server";
 
+import Anthropic from "@anthropic-ai/sdk";
+
 import { demoSchema } from "../src/genui-schema";
 import { createCharStream } from "../src/streaming";
+import { callClaude, DEFAULT_MODEL, describeApiError } from "./claude";
+
+/** A Workers Rate Limiting binding (only the part used here). */
+interface RateLimiter {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
+/** The Worker's bindings: secrets / vars, and the optional rate limiter. */
+export interface Env {
+  /** Enables `/api/chat`. A secret: `wrangler secret put ANTHROPIC_API_KEY`. */
+  ANTHROPIC_API_KEY?: string;
+  /** Overrides the model (default: `claude-opus-5-5`). */
+  ANTHROPIC_MODEL?: string;
+  /** Limits `/api/chat` requests per client IP (see `wrangler.jsonc`). */
+  CHAT_RATE_LIMIT?: RateLimiter;
+}
 
 /** Keep the public demo cheap: messages are short. */
 const MAX_MESSAGE_LENGTH = 20_000;
 
-const systemPrompt = `You are a shopping assistant. Answer in Markdown; use UI blocks where they help.
+/** A conversation sent to `/api/chat`: at most this many turns… */
+const MAX_TURNS = 40;
+/** …and this many characters in all. */
+const MAX_CONVERSATION_LENGTH = 100_000;
+
+const systemPrompt = `You are the shopping assistant of a demo store that showcases a Generative UI framework. The store is fictional: invent plausible products, prices, and details as needed, and keep them consistent within the conversation.
+
+Answer in Markdown; use UI blocks where they help (product cards, comparisons, order summaries, choices), and wire buttons to actions. Keep replies short: a sentence or two of prose around one or two UI blocks.
 
 ${formatGenUiPrompt(demoSchema)}`;
 
@@ -146,6 +175,115 @@ async function generate(request: Request): Promise<Response> {
   });
 }
 
+function modelOf(env: Env): string {
+  return env.ANTHROPIC_MODEL || DEFAULT_MODEL;
+}
+
+/**
+ * The conversation so far, from the client: user / assistant turns (text
+ * only), starting and ending with a user turn. `null` when malformed or over
+ * the demo's limits.
+ */
+function readConversation(value: unknown): Anthropic.Beta.BetaMessageParam[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_TURNS) return null;
+  const messages: Anthropic.Beta.BetaMessageParam[] = [];
+  let total = 0;
+  for (const entry of value as unknown[]) {
+    const { role, content } = (entry ?? {}) as Record<string, unknown>;
+    if (role !== "user" && role !== "assistant") return null;
+    const text = readMessage(content);
+    if (text === null || text.trim() === "") return null;
+    total += text.length;
+    messages.push({ role, content: text });
+  }
+  if (total > MAX_CONVERSATION_LENGTH) return null;
+  if (messages[0]!.role !== "user" || messages.at(-1)!.role !== "user") return null;
+  return messages;
+}
+
+/**
+ * Claude's reply to a conversation, streamed through `pipeGenUi` — the same
+ * pipeline as `/api/generate`, with the real model behind it. On a JSX
+ * issue (unless `recovery` is "log") the request is aborted; with
+ * "continue", a new request asks Claude to continue the same message.
+ */
+async function chat(request: Request, env: Env): Promise<Response> {
+  const apiKey = env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return json({ error: "Claude is not configured on this server (no ANTHROPIC_API_KEY)." }, 503);
+  }
+  if (env.CHAT_RATE_LIMIT) {
+    const key = request.headers.get("cf-connecting-ip") ?? "unknown";
+    const { success } = await env.CHAT_RATE_LIMIT.limit({ key });
+    if (!success) return json({ error: "Too many messages — wait a minute and try again." }, 429);
+  }
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const messages = readConversation(body?.["messages"]);
+  if (messages === null) {
+    return json({ error: "messages must be a conversation ending with a user turn" }, 400);
+  }
+  const requested = body?.["recovery"];
+  const recovery: Recovery = requested === "stop" || requested === "log" ? requested : "continue";
+
+  const client = new Anthropic({ apiKey });
+  const model = modelOf(env);
+  const started = Date.now();
+  const log = (message: string) =>
+    console.log(`[ingenui/claude] +${Date.now() - started}ms`, message);
+
+  const first = callClaude({ client, model, system: systemPrompt, messages });
+  try {
+    await first.connected;
+  } catch (error) {
+    const { status, message } = describeApiError(error);
+    log(message);
+    return json({ error: message }, status);
+  }
+
+  const pipe = pipeGenUi(first.text, demoSchema, {
+    onIssue(issue, target) {
+      log(describe(issue));
+      // Stopping cancels the source, which aborts the request.
+      if (recovery !== "log" && issue.kind === "jsx-error") target.stop();
+    },
+    continuation:
+      recovery === "continue"
+        ? async (snapshot: GenUiPipeSnapshot) => {
+            log(`stopped (${snapshot.stops}/${MAX_STOPS})`);
+            if (snapshot.stops > MAX_STOPS) return null;
+            const call = callClaude({
+              client,
+              model,
+              system: systemPrompt,
+              messages: [
+                ...messages,
+                {
+                  role: "user",
+                  content: formatContinuationMessage(snapshot.text, snapshot.issueReport),
+                },
+              ],
+            });
+            try {
+              await call.connected;
+            } catch (error) {
+              // Let the message end where it was stopped.
+              log(`continuation failed: ${describeApiError(error).message}`);
+              return null;
+            }
+            return call.text;
+          }
+        : undefined,
+  });
+  pipe.done.then(
+    (result) =>
+      log(`${result.status} after ${result.stops} stop(s), ${result.issues.length} issue(s)`),
+    (error: unknown) => log(`failed: ${String(error)}`),
+  );
+  return new Response(pipe.stream, {
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
 function describe(issue: GenUiIssue): string {
   const block = `block ${issue.blockIndex + 1}`;
   return issue.kind === "jsx-error"
@@ -154,8 +292,9 @@ function describe(issue: GenUiIssue): string {
 }
 
 /**
- * The next user turn, composed on the server: the canonical message for the
- * fired action (resolved against the schema) plus the feedback report —
+ * The next user turn, composed on the server: what the user typed, or the
+ * canonical message for the fired action (resolved against the schema), plus
+ * the feedback report —
  * parse-time issues from the server's own validation, and the render crashes
  * only the client can observe.
  */
@@ -165,6 +304,13 @@ async function next(request: Request): Promise<Response> {
   if (message === null) return json({ error: "message must be a string" }, 400);
 
   const parts: string[] = [];
+  const input = body?.["text"];
+  if (input !== undefined) {
+    const typed = readMessage(input);
+    if (typed === null || typed.trim() === "")
+      return json({ error: "text must be non-empty" }, 400);
+    parts.push(typed);
+  }
   const action = body?.["action"];
   if (action !== undefined) {
     const resolved = typeof action === "string" ? resolveGenUiAction(demoSchema, action) : null;
@@ -187,8 +333,14 @@ async function next(request: Request): Promise<Response> {
 }
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env = {}): Promise<Response> {
     const { pathname } = new URL(request.url);
+    if (pathname === "/api/config" && request.method === "GET") {
+      return json({
+        claude: { available: Boolean(env.ANTHROPIC_API_KEY), model: modelOf(env) },
+      });
+    }
+    if (pathname === "/api/chat" && request.method === "POST") return chat(request, env);
     if (pathname === "/api/prompt" && request.method === "GET") {
       return new Response(systemPrompt, {
         headers: { "content-type": "text/plain; charset=utf-8" },

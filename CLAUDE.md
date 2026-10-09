@@ -19,13 +19,14 @@ A **pnpm monorepo** hosting a Generative UI toolchain. Workspace layout:
     by both sides, and a React-free `ingenui/server` that prompts the model
     and validates its stream as it passes through.
 - `apps/*` — private, unpublished apps. Currently:
-  - [`apps/demo`](./apps/demo) — Vite playground with two modes: streams a
-    ingenui Markdown message (live UI blocks, action log, feedback report)
-    or raw JSX into the live tree. Deployed as a Cloudflare Worker whose
-    `/api/*` routes (`worker/index.ts`) are the ingenui server side: a
-    simulated model streamed through `pipeGenUi`, plus the server-built
-    prompt and next request. In `vite dev` a middleware serves the same
-    handler. Both workspace libraries resolve to source via aliases (Vite,
+  - [`apps/demo`](./apps/demo) — Vite playground with three modes: streams
+    a ingenui Markdown message (live UI blocks, action log, feedback report),
+    chats with Claude (the full loop with a real model), or streams raw JSX
+    into the live tree. Deployed as a Cloudflare Worker whose `/api/*` routes
+    (`worker/index.ts`) are the ingenui server side: a simulated model and
+    Claude (`worker/claude.ts`, Anthropic SDK; needs `ANTHROPIC_API_KEY`)
+    streamed through `pipeGenUi`, plus the server-built prompt and next
+    request. In `vite dev` a middleware serves the same handler. Both workspace libraries resolve to source via aliases (Vite,
     tsconfig, wrangler), so there is no build step.
 
 Per-package docs: the parser's original goal is

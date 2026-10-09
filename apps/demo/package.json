@@ -13,6 +13,7 @@
     "cf:preview": "vite build && wrangler dev"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.132.1",
     "@ingenui/incremental-jsx-parser": "workspace:*",
     "ingenui": "workspace:*",
     "react": "19.2.7",
