@@ -104,6 +104,7 @@ code {
   padding: 8px 14px;
   font-size: 0.82rem;
   font-weight: 600;
+  text-decoration: none;
   cursor: pointer;
 }
 

@@ -4,23 +4,23 @@ An interactive playground for the workspace libraries. It streams a source
 **a few characters at a time** (the way an LLM streams tokens) and renders the
 resulting **live React tree** side-by-side with the raw text. Everything that
 hasn't arrived yet is the single `<Pending />` frontier, shown here as a
-shimmer. Three modes:
+shimmer. Three modes, each a tab with its own permalink:
 
-- **ingenui · Markdown + ui+jsx** (default) — streams a
+- **ingenui · Markdown + ui+jsx** (`/markdown`, default at `/`) — streams a
   [`ingenui`](../../packages/ingenui) message **through the demo's server**:
   Markdown where ```` ```ui+jsx ```` code fences render as live, interactive
   UI. Clicking a streamed `actions.*` handler logs the **next request to the
   AI**, built by the server from the action's name. Action names may be
   model-defined (dynamic actions, the default). A malformed sample shows the
   **feedback report** the server built for the model.
-- **ingenui · chat with Claude** — the same pipeline with a **real model**:
+- **ingenui · chat with Claude** (`/chat`) — the same pipeline with a **real model**:
   a chat with Claude as a shopping assistant. Its replies stream through the
   server's `pipeGenUi` (which can abort the request on a broken block and ask
   Claude to continue with a corrected one), and clicking a button wired to
   `actions.*` sends the next turn — composed by the server, with feedback on
   the previous reply attached. Needs an
   [API key](#claude-api-key).
-- **parser · raw JSX** — streams a bare JSX string straight into
+- **parser · raw JSX** (`/parser`) — streams a bare JSX string straight into
   [`@ingenui/incremental-jsx-parser`](../../packages/incremental-jsx-parser).
 
 The layout is two side-by-side panes: the **received stream** (raw text, growing
