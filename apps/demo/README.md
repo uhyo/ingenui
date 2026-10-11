@@ -92,11 +92,11 @@ read:
 
 ```sh
 ANTHROPIC_API_KEY=sk-ant-…
-# ANTHROPIC_MODEL=claude-opus-5-5   # optional override
+# ANTHROPIC_MODEL=claude-sonnet-5-5   # optional override
 ```
 
 Without a key, the other modes work as before and the chat mode says it
-isn't configured. Requests use `claude-opus-5-5` at `effort: "low"` (fast
+isn't configured. Requests use `claude-sonnet-5-5` at `effort: "low"` (fast
 first tokens for a chat turn), `max_tokens: 8192`, prompt caching on the
 system prompt, and the server-side refusal fallback (`fallbacks: "default"`).
 

@@ -7,7 +7,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 
-export const DEFAULT_MODEL = "claude-opus-5-5";
+export const DEFAULT_MODEL = "claude-sonnet-5-5";
 
 /**
  * Generous for a chat turn with a few UI blocks; thinking tokens count
