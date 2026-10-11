@@ -52,7 +52,7 @@ interface RateLimiter {
 export interface Env {
   /** Enables `/api/chat`. A secret: `wrangler secret put ANTHROPIC_API_KEY`. */
   ANTHROPIC_API_KEY?: string;
-  /** Overrides the model (default: `claude-opus-5-5`). */
+  /** Overrides the model (default: `claude-sonnet-5-5`). */
   ANTHROPIC_MODEL?: string;
   /** Limits `/api/chat` requests per client IP (see `wrangler.jsonc`). */
   CHAT_RATE_LIMIT?: RateLimiter;
