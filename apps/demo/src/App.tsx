@@ -16,14 +16,27 @@ type Mode = "claude" | "genui" | "jsx";
 interface ModeInfo {
   id: Mode;
   label: string;
+  /** The tab's permalink. */
+  path: string;
   samples: Sample[];
 }
 
 const MODES: ModeInfo[] = [
-  { id: "genui", label: "ingenui · Markdown + ui+jsx", samples: markdownSamples },
-  { id: "claude", label: "ingenui · chat with Claude", samples: [] },
-  { id: "jsx", label: "parser · raw JSX", samples: jsxSamples },
+  {
+    id: "genui",
+    label: "ingenui · Markdown + ui+jsx",
+    path: "/markdown",
+    samples: markdownSamples,
+  },
+  { id: "claude", label: "ingenui · chat with Claude", path: "/chat", samples: [] },
+  { id: "jsx", label: "parser · raw JSX", path: "/parser", samples: jsxSamples },
 ];
+
+/** The mode a URL path links to; `/` (or any unknown path) is the default mode. */
+function modeFromPath(pathname: string): ModeInfo {
+  const path = pathname.replace(/\/+$/, "");
+  return MODES.find((m) => m.path === path) ?? MODES[0]!;
+}
 
 interface RunParams {
   key: number;
@@ -48,11 +61,13 @@ const SPEEDS = [
 ];
 
 export function App() {
-  const [mode, setMode] = useState<Mode>("genui");
-  const [text, setText] = useState(markdownSamples[0]!.source);
+  const [initialMode] = useState(() => modeFromPath(window.location.pathname));
+  const initialSample = initialMode.samples[0] ?? markdownSamples[0]!;
+  const [mode, setMode] = useState<Mode>(initialMode.id);
+  const [text, setText] = useState(initialSample.source);
   const [speedIndex, setSpeedIndex] = useState(1);
-  const [recovery, setRecovery] = useState<Recovery>("continue");
-  const [correction, setCorrection] = useState<string | undefined>(undefined);
+  const [recovery, setRecovery] = useState<Recovery>(initialSample.recovery ?? "continue");
+  const [correction, setCorrection] = useState<string | undefined>(initialSample.correction);
   const [run, setRun] = useState<RunParams | null>(null);
   const [chatKey, setChatKey] = useState(0);
 
@@ -63,6 +78,13 @@ export function App() {
     setMode(next.id);
     if (next.samples[0]) loadSample(next.samples[0]);
   };
+
+  // Browser back / forward between the tabs' permalinks.
+  useEffect(() => {
+    const onPopState = () => switchMode(modeFromPath(window.location.pathname));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  });
 
   const loadSample = (sample: Sample) => {
     setText(sample.source);
@@ -114,16 +136,22 @@ export function App() {
       <section className="panel">
         <div className="mode" role="tablist" aria-label="Demo mode">
           {MODES.map((m) => (
-            <button
+            <a
               key={m.id}
-              type="button"
+              href={m.path}
               role="tab"
               aria-selected={m.id === mode}
               className={`mode__tab ${m.id === mode ? "mode__tab--active" : ""}`}
-              onClick={() => switchMode(m)}
+              onClick={(e) => {
+                // Modified clicks (new tab / window) follow the link itself.
+                if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                e.preventDefault();
+                if (window.location.pathname !== m.path) window.history.pushState(null, "", m.path);
+                switchMode(m);
+              }}
             >
               {m.label}
-            </button>
+            </a>
           ))}
         </div>
 
