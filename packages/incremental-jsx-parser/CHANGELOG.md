@@ -1,5 +1,22 @@
 # @ingenui/incremental-jsx-parser
 
+## 0.0.2
+
+### Patch Changes
+
+- ebfc21a: Add `useIsElementComplete()`: a hook for catalog components that returns `false` while the component's element is still open on the stream and `true` once it is settled (closing tag arrived, self-closing, or auto-closed). Each resolved component element is now wrapped in a context provider, so the flag flips without remounting. Exported from `@ingenui/incremental-jsx-parser` and `/react`, and re-exported from `ingenui/react`.
+- 7ea2f79: Internal refactoring: the parser's AST primitives and error events move into dependency-free modules (no more import cycles), and duplicated logic (component resolution, fence parsing, `actions` variable wiring) is shared. `IncrementalJsxParserOptions` fields now also accept an explicit `undefined`, and `GenUiMessage` extends `IncrementalJsxParser`. With `dynamicActions: false` and an empty `actions` map, the `actions` variable is no longer defined (matching the prompt).
+- ff93a7e: The prompt contract (`formatPromptContract`, and so `formatGenUiPrompt`) no longer claims text is "rendered literally". It now says text follows JSX rules — HTML entities are decoded and line breaks/indentation collapse to single spaces — still recommends writing characters directly, and lists `&lt;` / `&#123;` alongside `{"<"}` for a literal `<` or `{`.
+- e871136: Separate pure logic from side effects. **Breaking (`/core`):** `createParser` now takes the schema checks as one `checks: SchemaChecks` option (build it with the new `createSchemaChecks(schema)`) instead of the flat `isKnownComponent` / `isKnownVariable` / `isAllowedElement` / `checkProp` callbacks, and `TreeBuilderOptions` is no longer exported. The AST node types are now `readonly`, matching the frozen nodes the parser has always handed out. Parse errors are still reported synchronously by the `write()` that completes them, now once the chunk is fully parsed. `validateOpeningTag` and `validateVariable` are exported as the pure functions behind the schema errors. Streaming is faster with small chunks (the live snapshot copies less), and a streamed ingenui message renders with fewer, larger UI-block updates.
+- a60f3da: ingenui now covers the server as well as the client:
+  
+  - `ingenui/schema`: `defineGenUiSchema` declares the parse-affecting options (elements, component prop catalogs with descriptions, variable types, actions, `dynamicActions`, `mismatchedTag`) as plain data, shared by the server and the client.
+  - `bindGenUi(schema, bindings)` (in `ingenui`) binds components, variable values and action handlers to a schema. The bindings are type-checked against the schema (`InferSchemaType` / `InferComponentProps`) and checked at runtime.
+  - `ingenui/server` (React-free): `pipeGenUi` validates a model's stream while passing it through to the client, reporting the client's parse-time issues as soon as they are streamed. It also exports `createGenUiValidator` / `validateGenUiMessage`, `resolveGenUiAction` (for building the next request on the server from an action name), `formatGenUiPrompt`, and `formatIssueReport`.
+  - `formatGenUiPrompt` accepts a schema and includes component and action descriptions. Actions may be declared as `{ description }`.
+  
+  Parser: component specs accept a `description` (listed by `formatPromptContract`). The prompt contract now lists declared variables first, and a prop rejected by an empty prop catalog now reads "`<Tag>` takes no props".
+
 ## 0.0.1
 
 ### Patch Changes

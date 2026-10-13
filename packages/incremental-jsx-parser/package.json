@@ -1,6 +1,6 @@
 {
   "name": "@ingenui/incremental-jsx-parser",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Incrementally parse a streamed JSX string into a live React snapshot, rendering not-yet-arrived parts as <Pending />.",
   "keywords": [
     "ai",
