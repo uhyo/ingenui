@@ -18,7 +18,9 @@ shimmer. Three modes, each a tab with its own permalink:
   server's `pipeGenUi` (which can abort the request on a broken block and ask
   Claude to continue with a corrected one), and clicking a button wired to
   `actions.*` sends the next turn — composed by the server, with feedback on
-  the previous reply attached. Needs an
+  the previous reply attached. The tab leads with a short pitch so visitors
+  try the chat first; these details (and the "On issue" setting and system
+  prompt) sit in a collapsed "How it works" section below it. Needs an
   [API key](#claude-api-key).
 - **parser · raw JSX** (`/parser`) — streams a bare JSX string straight into
   [`@ingenui/incremental-jsx-parser`](../../packages/incremental-jsx-parser).

@@ -92,6 +92,11 @@ code {
 .mode {
   display: inline-flex;
   margin-bottom: 14px;
+}
+
+/* The chat tab has no controls under the tabs. */
+.mode:last-child {
+  margin-bottom: 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
@@ -188,6 +193,31 @@ code {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+/* The chat's technical notes, collapsed below it. */
+.internals {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.internals > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.internals > p {
+  margin: 12px 0 0;
+  max-width: 80ch;
+}
+
+.internals > .panel__toolbar {
+  margin-top: 12px;
 }
 
 /* The system prompt the server builds from the shared schema. */
@@ -467,13 +497,22 @@ code {
 
 .chat__head {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
   align-items: center;
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+.chat__head > * {
+  white-space: nowrap;
+}
+
+.chat__head > :first-child {
+  margin-right: auto;
 }
 
 .chat__turns {
@@ -504,6 +543,11 @@ code {
 
 .chip:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+.chip:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .turn--user {

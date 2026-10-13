@@ -19,6 +19,8 @@ interface ModeInfo {
   /** The tab's permalink. */
   path: string;
   samples: Sample[];
+  /** The tab's introduction, under the logo: what it shows, in plain words. */
+  intro: ReactNode;
 }
 
 const MODES: ModeInfo[] = [
@@ -27,9 +29,42 @@ const MODES: ModeInfo[] = [
     label: "ingenui · Markdown + ui+jsx",
     path: "/markdown",
     samples: markdownSamples,
+    intro: (
+      <>
+        An AI reply streams in as Markdown, and its <code>ui+jsx</code> code blocks become{" "}
+        <strong>live, interactive UI</strong> as they arrive — no waiting for the message to finish.
+        Pick a sample and press “Stream it”; the malformed ones show how mistakes are caught and
+        reported back to the model.
+      </>
+    ),
   },
-  { id: "claude", label: "ingenui · chat with Claude", path: "/chat", samples: [] },
-  { id: "jsx", label: "parser · raw JSX", path: "/parser", samples: jsxSamples },
+  {
+    id: "claude",
+    label: "ingenui · chat with Claude",
+    path: "/chat",
+    samples: [],
+    intro: (
+      <>
+        Chat with <strong>Claude</strong>, a real AI model, playing a shopping assistant. Its
+        replies come as interactive UI that renders live while they stream in, and clicking a button
+        in a reply carries the conversation on.
+      </>
+    ),
+  },
+  {
+    id: "jsx",
+    label: "parser · raw JSX",
+    path: "/parser",
+    samples: jsxSamples,
+    intro: (
+      <>
+        The engine underneath: a parser that turns a JSX string into a{" "}
+        <strong>live React tree</strong> while it is still streaming. Whatever hasn’t arrived yet is
+        a single shimmering placeholder, and components know when their own content is complete —
+        cards glow while they fill in, and buttons stay disabled until their label is final.
+      </>
+    ),
+  },
 ];
 
 /** The mode a URL path links to; `/` (or any unknown path) is the default mode. */
@@ -120,17 +155,7 @@ export function App() {
             <span className="masthead__dot">●</span> live demo
           </span>
         </h1>
-        <p>
-          A streamed message becomes a <strong>live React tree</strong>. In ingenui mode the stream
-          is Markdown where <code>```ui+jsx</code> code fences render as interactive UI (with{" "}
-          <code>actions.*</code> wiring events back to the conversation); in parser mode it is raw
-          JSX. The chat mode puts a real model behind it: Claude writes the message, and clicking
-          its UI sends the next turn. Either way, what has not arrived yet is a single{" "}
-          <code>&lt;Pending /&gt;</code> shimmer at the streaming frontier, and components can ask{" "}
-          <code>useIsElementComplete()</code> whether their own children are still arriving — cards
-          glow while open, badges and buttons hide the shimmer (and buttons stay disabled) until
-          their label is final.
-        </p>
+        <p>{modeInfo.intro}</p>
       </header>
 
       <section className="panel">
@@ -155,9 +180,9 @@ export function App() {
           ))}
         </div>
 
-        <div className="panel__toolbar">
-          {mode !== "claude" && (
-            <>
+        {mode !== "claude" && (
+          <>
+            <div className="panel__toolbar">
               <label className="field">
                 <span>Sample</span>
                 <select
@@ -188,73 +213,48 @@ export function App() {
                   ))}
                 </select>
               </label>
-            </>
-          )}
 
-          {mode !== "jsx" && (
-            <label className="field">
-              <span>On issue</span>
-              <select value={recovery} onChange={(e) => setRecovery(e.target.value as Recovery)}>
-                {RECOVERIES.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+              {mode === "genui" && <RecoverySelect value={recovery} onChange={setRecovery} />}
 
-          {mode === "claude" ? (
-            <button className="run" type="button" onClick={() => setChatKey((k) => k + 1)}>
-              New chat
-            </button>
-          ) : (
-            <button className="run" type="button" onClick={startStream}>
-              {run ? "↻ Replay stream" : "▶ Stream it"}
-            </button>
-          )}
-        </div>
+              <button className="run" type="button" onClick={startStream}>
+                {run ? "↻ Replay stream" : "▶ Stream it"}
+              </button>
+            </div>
 
-        {mode !== "claude" && (
-          <textarea
-            className="editor"
-            spellCheck={false}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            aria-label="Source to stream"
-          />
+            <textarea
+              className="editor"
+              spellCheck={false}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              aria-label="Source to stream"
+            />
+            <p className="hint">
+              <AllowedComponents />
+              {mode === "genui" && (
+                <>
+                  {" "}
+                  — and <code>actions.*</code> names are model-defined (dynamic actions, the
+                  default). The catalog is a data-only schema shared with the server, which streams
+                  the message back through <code>pipeGenUi</code>, validating it on the way. On a
+                  JSX issue, the server can stop the model before the broken chunk even reaches you
+                  — and continue the same message with a correction.
+                </>
+              )}
+            </p>
+            {mode === "genui" && <SystemPrompt />}
+          </>
         )}
-        <p className="hint">
-          Allowed components (the parser doubles as a security allowlist):{" "}
-          {componentNames.map((n) => (
-            <code key={n}>{n}</code>
-          ))}
-          {mode === "claude" && (
-            <>
-              {" "}
-              — Claude gets the system prompt below (built from the same schema), and its reply is
-              streamed back through <code>pipeGenUi</code>. On a JSX issue, the server can abort the
-              request and ask Claude to continue the same message with a corrected block. Clicking a
-              button wired to <code>actions.*</code> sends the next turn, with feedback on the
-              previous reply attached by the server.
-            </>
-          )}
-          {mode === "genui" && (
-            <>
-              {" "}
-              — and <code>actions.*</code> names are model-defined (dynamic actions, the default).
-              The catalog is a data-only schema shared with the server, which streams the message
-              back through <code>pipeGenUi</code>, validating it on the way. On a JSX issue, the
-              server can stop the model before the broken chunk even reaches you — and continue the
-              same message with a correction.
-            </>
-          )}
-        </p>
-        {mode !== "jsx" && <SystemPrompt />}
       </section>
 
       {mode === "claude" ? (
-        <ClaudeChat key={chatKey} recovery={recovery} />
+        <>
+          <ClaudeChat
+            key={chatKey}
+            recovery={recovery}
+            onNewChat={() => setChatKey((k) => k + 1)}
+          />
+          <ChatInternals recovery={recovery} onRecoveryChange={setRecovery} />
+        </>
       ) : run && run.mode === mode ? (
         run.mode === "genui" ? (
           <GenUiStreamView key={run.key} params={run} />
@@ -364,6 +364,71 @@ function JsxStreamView({ params }: { params: RunParams }) {
         </div>
       )}
     </section>
+  );
+}
+
+function RecoverySelect({
+  value,
+  onChange,
+}: {
+  value: Recovery;
+  onChange: (value: Recovery) => void;
+}) {
+  return (
+    <label className="field">
+      <span>On issue</span>
+      <select value={value} onChange={(e) => onChange(e.target.value as Recovery)}>
+        {RECOVERIES.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function AllowedComponents() {
+  return (
+    <>
+      Allowed components (the parser doubles as a security allowlist):{" "}
+      {componentNames.map((n) => (
+        <code key={n}>{n}</code>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The chat's technical notes, collapsed below the chat so visitors try it
+ * first: how a reply travels, the components, the recovery setting, the
+ * system prompt.
+ */
+function ChatInternals({
+  recovery,
+  onRecoveryChange,
+}: {
+  recovery: Recovery;
+  onRecoveryChange: (value: Recovery) => void;
+}) {
+  return (
+    <details className="internals">
+      <summary>How it works</summary>
+      <p>
+        Claude gets a system prompt built on the server from the same schema the client renders
+        with, and its reply is streamed back through <code>pipeGenUi</code>, validated on the way.
+        On a JSX issue, the server can abort the request and ask Claude to continue the same message
+        with a corrected block. Clicking a button wired to <code>actions.*</code> sends the next
+        turn, with feedback on the previous reply attached by the server.
+      </p>
+      <p className="hint">
+        <AllowedComponents />
+      </p>
+      <div className="panel__toolbar">
+        <RecoverySelect value={recovery} onChange={onRecoveryChange} />
+      </div>
+      <SystemPrompt />
+    </details>
   );
 }
 
