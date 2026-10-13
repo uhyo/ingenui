@@ -92,6 +92,11 @@ code {
 .mode {
   display: inline-flex;
   margin-bottom: 14px;
+}
+
+/* The chat tab has no controls under the tabs. */
+.mode:last-child {
+  margin-bottom: 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
@@ -188,14 +193,6 @@ code {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-}
-
-/* A tab's short pitch, beside its controls. */
-.lede {
-  flex: 1 1 40ch;
-  margin: 0;
-  max-width: 70ch;
-  font-size: 0.95rem;
 }
 
 /* The chat's technical notes, collapsed below it. */
@@ -500,13 +497,22 @@ code {
 
 .chat__head {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
   align-items: center;
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+.chat__head > * {
+  white-space: nowrap;
+}
+
+.chat__head > :first-child {
+  margin-right: auto;
 }
 
 .chat__turns {
@@ -537,6 +543,11 @@ code {
 
 .chip:hover:not(:disabled) {
   border-color: var(--accent);
+}
+
+.chip:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .turn--user {

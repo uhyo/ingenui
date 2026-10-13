@@ -47,7 +47,7 @@ interface Reply {
   renderErrors: RenderError[];
 }
 
-export function ClaudeChat({ recovery }: { recovery: Recovery }) {
+export function ClaudeChat({ recovery, onNewChat }: { recovery: Recovery; onNewChat: () => void }) {
   const [config, setConfig] = useState<{ available: boolean; model: string } | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -141,6 +141,9 @@ export function ClaudeChat({ recovery }: { recovery: Recovery }) {
       <div className="chat__head">
         <span>Conversation</span>
         <span className="status status--done">{config.model}</span>
+        <button type="button" className="chip" disabled={turns.length === 0} onClick={onNewChat}>
+          New chat
+        </button>
       </div>
 
       <div className="chat__turns">

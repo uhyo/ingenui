@@ -19,6 +19,8 @@ interface ModeInfo {
   /** The tab's permalink. */
   path: string;
   samples: Sample[];
+  /** The tab's introduction, under the logo: what it shows, in plain words. */
+  intro: ReactNode;
 }
 
 const MODES: ModeInfo[] = [
@@ -27,9 +29,42 @@ const MODES: ModeInfo[] = [
     label: "ingenui · Markdown + ui+jsx",
     path: "/markdown",
     samples: markdownSamples,
+    intro: (
+      <>
+        An AI reply streams in as Markdown, and its <code>ui+jsx</code> code blocks become{" "}
+        <strong>live, interactive UI</strong> as they arrive — no waiting for the message to finish.
+        Pick a sample and press “Stream it”; the malformed ones show how mistakes are caught and
+        reported back to the model.
+      </>
+    ),
   },
-  { id: "claude", label: "ingenui · chat with Claude", path: "/chat", samples: [] },
-  { id: "jsx", label: "parser · raw JSX", path: "/parser", samples: jsxSamples },
+  {
+    id: "claude",
+    label: "ingenui · chat with Claude",
+    path: "/chat",
+    samples: [],
+    intro: (
+      <>
+        Chat with <strong>Claude</strong>, a real AI model, playing a shopping assistant. Its
+        replies come as interactive UI that renders live while they stream in, and clicking a button
+        in a reply carries the conversation on.
+      </>
+    ),
+  },
+  {
+    id: "jsx",
+    label: "parser · raw JSX",
+    path: "/parser",
+    samples: jsxSamples,
+    intro: (
+      <>
+        The engine underneath: a parser that turns a JSX string into a{" "}
+        <strong>live React tree</strong> while it is still streaming. Whatever hasn’t arrived yet is
+        a single shimmering placeholder, and components know when their own content is complete —
+        cards glow while they fill in, and buttons stay disabled until their label is final.
+      </>
+    ),
+  },
 ];
 
 /** The mode a URL path links to; `/` (or any unknown path) is the default mode. */
@@ -120,17 +155,7 @@ export function App() {
             <span className="masthead__dot">●</span> live demo
           </span>
         </h1>
-        <p>
-          A streamed message becomes a <strong>live React tree</strong>. In ingenui mode the stream
-          is Markdown where <code>```ui+jsx</code> code fences render as interactive UI (with{" "}
-          <code>actions.*</code> wiring events back to the conversation); in parser mode it is raw
-          JSX. The chat mode puts a real model behind it: Claude writes the message, and clicking
-          its UI sends the next turn. Either way, what has not arrived yet is a single{" "}
-          <code>&lt;Pending /&gt;</code> shimmer at the streaming frontier, and components can ask{" "}
-          <code>useIsElementComplete()</code> whether their own children are still arriving — cards
-          glow while open, badges and buttons hide the shimmer (and buttons stay disabled) until
-          their label is final.
-        </p>
+        <p>{modeInfo.intro}</p>
       </header>
 
       <section className="panel">
@@ -155,16 +180,9 @@ export function App() {
           ))}
         </div>
 
-        <div className="panel__toolbar">
-          {mode === "claude" && (
-            <p className="lede">
-              Chat with <strong>Claude</strong>, a real AI model, playing a shopping assistant. Its
-              replies come as interactive UI that renders live while they stream in, and clicking a
-              button in a reply carries the conversation on.
-            </p>
-          )}
-          {mode !== "claude" && (
-            <>
+        {mode !== "claude" && (
+          <>
+            <div className="panel__toolbar">
               <label className="field">
                 <span>Sample</span>
                 <select
@@ -195,24 +213,14 @@ export function App() {
                   ))}
                 </select>
               </label>
-            </>
-          )}
 
-          {mode === "genui" && <RecoverySelect value={recovery} onChange={setRecovery} />}
+              {mode === "genui" && <RecoverySelect value={recovery} onChange={setRecovery} />}
 
-          {mode === "claude" ? (
-            <button className="run" type="button" onClick={() => setChatKey((k) => k + 1)}>
-              New chat
-            </button>
-          ) : (
-            <button className="run" type="button" onClick={startStream}>
-              {run ? "↻ Replay stream" : "▶ Stream it"}
-            </button>
-          )}
-        </div>
+              <button className="run" type="button" onClick={startStream}>
+                {run ? "↻ Replay stream" : "▶ Stream it"}
+              </button>
+            </div>
 
-        {mode !== "claude" && (
-          <>
             <textarea
               className="editor"
               spellCheck={false}
@@ -240,7 +248,11 @@ export function App() {
 
       {mode === "claude" ? (
         <>
-          <ClaudeChat key={chatKey} recovery={recovery} />
+          <ClaudeChat
+            key={chatKey}
+            recovery={recovery}
+            onNewChat={() => setChatKey((k) => k + 1)}
+          />
           <ChatInternals recovery={recovery} onRecoveryChange={setRecovery} />
         </>
       ) : run && run.mode === mode ? (
