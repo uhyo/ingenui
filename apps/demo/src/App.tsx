@@ -156,6 +156,13 @@ export function App() {
         </div>
 
         <div className="panel__toolbar">
+          {mode === "claude" && (
+            <p className="lede">
+              Chat with <strong>Claude</strong>, a real AI model, playing a shopping assistant. Its
+              replies come as interactive UI that renders live while they stream in, and clicking a
+              button in a reply carries the conversation on.
+            </p>
+          )}
           {mode !== "claude" && (
             <>
               <label className="field">
@@ -191,18 +198,7 @@ export function App() {
             </>
           )}
 
-          {mode !== "jsx" && (
-            <label className="field">
-              <span>On issue</span>
-              <select value={recovery} onChange={(e) => setRecovery(e.target.value as Recovery)}>
-                {RECOVERIES.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+          {mode === "genui" && <RecoverySelect value={recovery} onChange={setRecovery} />}
 
           {mode === "claude" ? (
             <button className="run" type="button" onClick={() => setChatKey((k) => k + 1)}>
@@ -216,45 +212,37 @@ export function App() {
         </div>
 
         {mode !== "claude" && (
-          <textarea
-            className="editor"
-            spellCheck={false}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            aria-label="Source to stream"
-          />
+          <>
+            <textarea
+              className="editor"
+              spellCheck={false}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              aria-label="Source to stream"
+            />
+            <p className="hint">
+              <AllowedComponents />
+              {mode === "genui" && (
+                <>
+                  {" "}
+                  — and <code>actions.*</code> names are model-defined (dynamic actions, the
+                  default). The catalog is a data-only schema shared with the server, which streams
+                  the message back through <code>pipeGenUi</code>, validating it on the way. On a
+                  JSX issue, the server can stop the model before the broken chunk even reaches you
+                  — and continue the same message with a correction.
+                </>
+              )}
+            </p>
+            {mode === "genui" && <SystemPrompt />}
+          </>
         )}
-        <p className="hint">
-          Allowed components (the parser doubles as a security allowlist):{" "}
-          {componentNames.map((n) => (
-            <code key={n}>{n}</code>
-          ))}
-          {mode === "claude" && (
-            <>
-              {" "}
-              — Claude gets the system prompt below (built from the same schema), and its reply is
-              streamed back through <code>pipeGenUi</code>. On a JSX issue, the server can abort the
-              request and ask Claude to continue the same message with a corrected block. Clicking a
-              button wired to <code>actions.*</code> sends the next turn, with feedback on the
-              previous reply attached by the server.
-            </>
-          )}
-          {mode === "genui" && (
-            <>
-              {" "}
-              — and <code>actions.*</code> names are model-defined (dynamic actions, the default).
-              The catalog is a data-only schema shared with the server, which streams the message
-              back through <code>pipeGenUi</code>, validating it on the way. On a JSX issue, the
-              server can stop the model before the broken chunk even reaches you — and continue the
-              same message with a correction.
-            </>
-          )}
-        </p>
-        {mode !== "jsx" && <SystemPrompt />}
       </section>
 
       {mode === "claude" ? (
-        <ClaudeChat key={chatKey} recovery={recovery} />
+        <>
+          <ClaudeChat key={chatKey} recovery={recovery} />
+          <ChatInternals recovery={recovery} onRecoveryChange={setRecovery} />
+        </>
       ) : run && run.mode === mode ? (
         run.mode === "genui" ? (
           <GenUiStreamView key={run.key} params={run} />
@@ -364,6 +352,71 @@ function JsxStreamView({ params }: { params: RunParams }) {
         </div>
       )}
     </section>
+  );
+}
+
+function RecoverySelect({
+  value,
+  onChange,
+}: {
+  value: Recovery;
+  onChange: (value: Recovery) => void;
+}) {
+  return (
+    <label className="field">
+      <span>On issue</span>
+      <select value={value} onChange={(e) => onChange(e.target.value as Recovery)}>
+        {RECOVERIES.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function AllowedComponents() {
+  return (
+    <>
+      Allowed components (the parser doubles as a security allowlist):{" "}
+      {componentNames.map((n) => (
+        <code key={n}>{n}</code>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The chat's technical notes, collapsed below the chat so visitors try it
+ * first: how a reply travels, the components, the recovery setting, the
+ * system prompt.
+ */
+function ChatInternals({
+  recovery,
+  onRecoveryChange,
+}: {
+  recovery: Recovery;
+  onRecoveryChange: (value: Recovery) => void;
+}) {
+  return (
+    <details className="internals">
+      <summary>How it works</summary>
+      <p>
+        Claude gets a system prompt built on the server from the same schema the client renders
+        with, and its reply is streamed back through <code>pipeGenUi</code>, validated on the way.
+        On a JSX issue, the server can abort the request and ask Claude to continue the same message
+        with a corrected block. Clicking a button wired to <code>actions.*</code> sends the next
+        turn, with feedback on the previous reply attached by the server.
+      </p>
+      <p className="hint">
+        <AllowedComponents />
+      </p>
+      <div className="panel__toolbar">
+        <RecoverySelect value={recovery} onChange={onRecoveryChange} />
+      </div>
+      <SystemPrompt />
+    </details>
   );
 }
 

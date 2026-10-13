@@ -190,6 +190,39 @@ code {
   align-items: center;
 }
 
+/* A tab's short pitch, beside its controls. */
+.lede {
+  flex: 1 1 40ch;
+  margin: 0;
+  max-width: 70ch;
+  font-size: 0.95rem;
+}
+
+/* The chat's technical notes, collapsed below it. */
+.internals {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.internals > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.internals > p {
+  margin: 12px 0 0;
+  max-width: 80ch;
+}
+
+.internals > .panel__toolbar {
+  margin-top: 12px;
+}
+
 /* The system prompt the server builds from the shared schema. */
 .prompt {
   margin-top: 10px;
