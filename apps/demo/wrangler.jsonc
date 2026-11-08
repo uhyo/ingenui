@@ -15,6 +15,11 @@
   // Caps `/api/chat` — the route that spends Claude API credit — per client
   // IP. Its API key is a secret: `wrangler secret put ANTHROPIC_API_KEY`
   // (locally: `ANTHROPIC_API_KEY=…` in `.env.local`).
+  // Front ends on other origins allowed to call `/api/*` (CORS),
+  // comma-separated: the JSConf JP 2026 slides on GitHub Pages.
+  "vars": {
+    "ALLOWED_ORIGINS": "https://uhyo.github.io",
+  },
   "ratelimits": [
     { "name": "CHAT_RATE_LIMIT", "namespace_id": "1001", "simple": { "limit": 6, "period": 60 } },
   ],
