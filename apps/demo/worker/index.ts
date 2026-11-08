@@ -19,6 +19,10 @@
  *   re-validating the previous message itself instead of trusting
  *   client-written text.
  *
+ * The routes also answer cross-origin requests from the origins listed in
+ * `ALLOWED_ORIGINS` (CORS), so other front ends — e.g. slides on GitHub
+ * Pages — can use this server.
+ *
  * `/api/generate` needs no API key: its "LLM provider" is simulated, replaying
  * the text the user typed a few characters at a time; asked to continue
  * after a stop, the simulated model writes the sample's correction, then
@@ -56,6 +60,12 @@ export interface Env {
   ANTHROPIC_MODEL?: string;
   /** Limits `/api/chat` requests per client IP (see `wrangler.jsonc`). */
   CHAT_RATE_LIMIT?: RateLimiter;
+  /**
+   * Origins allowed to call `/api/*` from a browser on another origin, as a
+   * comma-separated list of exact origins (`https://example.github.io`).
+   * Unset: same-origin only.
+   */
+  ALLOWED_ORIGINS?: string;
 }
 
 /** Keep the public demo cheap: messages are short. */
@@ -332,22 +342,56 @@ async function next(request: Request): Promise<Response> {
   return json({ text: parts.length > 0 ? parts.join("\n\n") : null });
 }
 
+async function route(request: Request, env: Env): Promise<Response> {
+  const { pathname } = new URL(request.url);
+  if (pathname === "/api/config" && request.method === "GET") {
+    return json({
+      claude: { available: Boolean(env.ANTHROPIC_API_KEY), model: modelOf(env) },
+    });
+  }
+  if (pathname === "/api/chat" && request.method === "POST") return chat(request, env);
+  if (pathname === "/api/prompt" && request.method === "GET") {
+    return new Response(systemPrompt, {
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  if (pathname === "/api/generate" && request.method === "POST") return generate(request);
+  if (pathname === "/api/next" && request.method === "POST") return next(request);
+  return json({ error: "not found" }, 404);
+}
+
+/**
+ * CORS headers for a request from an allowed foreign origin; `null` for
+ * same-origin requests (no `Origin`, or this server's own) and for origins
+ * not in `ALLOWED_ORIGINS` — the browser then blocks the response.
+ */
+function corsHeaders(request: Request, env: Env): Record<string, string> | null {
+  const origin = request.headers.get("origin");
+  if (origin === null || origin === new URL(request.url).origin) return null;
+  const allowed = (env.ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (!allowed.includes(origin)) return null;
+  return {
+    "access-control-allow-origin": origin,
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "content-type",
+    "access-control-max-age": "86400",
+  };
+}
+
 export default {
   async fetch(request: Request, env: Env = {}): Promise<Response> {
-    const { pathname } = new URL(request.url);
-    if (pathname === "/api/config" && request.method === "GET") {
-      return json({
-        claude: { available: Boolean(env.ANTHROPIC_API_KEY), model: modelOf(env) },
-      });
+    const cors = corsHeaders(request, env);
+    // Preflight (a JSON POST from another origin sends one first).
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: cors ? 204 : 403, headers: { ...cors, vary: "Origin" } });
     }
-    if (pathname === "/api/chat" && request.method === "POST") return chat(request, env);
-    if (pathname === "/api/prompt" && request.method === "GET") {
-      return new Response(systemPrompt, {
-        headers: { "content-type": "text/plain; charset=utf-8" },
-      });
-    }
-    if (pathname === "/api/generate" && request.method === "POST") return generate(request);
-    if (pathname === "/api/next" && request.method === "POST") return next(request);
-    return json({ error: "not found" }, 404);
+    const response = await route(request, env);
+    // The answer depends on `Origin` whenever an allowlist is configured.
+    if (env.ALLOWED_ORIGINS) response.headers.append("vary", "Origin");
+    for (const [name, value] of Object.entries(cors ?? {})) response.headers.set(name, value);
+    return response;
   },
 };

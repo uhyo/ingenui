@@ -27,7 +27,7 @@ async function toRequest(req: IncomingMessage): Promise<Request> {
 }
 
 /** The Worker's variables, as `wrangler dev` reads them (`.env`, `.env.local`). */
-const WORKER_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"];
+const WORKER_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "ALLOWED_ORIGINS"];
 
 /**
  * Serve the Worker's `/api/*` routes (`worker/index.ts`) from `vite dev`, so

@@ -127,6 +127,14 @@ in `wrangler.jsonc`), caps the conversation's size, and aborts a request as
 soon as the client disconnects or the server stops the message; also set a
 spend limit for the key's workspace in the Claude Console.
 
+Other front ends can use the deployed server too: `/api/*` answers
+cross-origin requests (CORS) from the origins in `ALLOWED_ORIGINS` — a
+comma-separated list of exact origins, set in `wrangler.jsonc` under
+`vars` (currently the talk slides on `https://uhyo.github.io`). Requests from
+any other origin get no CORS headers, so browsers block them. (This keeps
+other websites from spending the API credit through their visitors'
+browsers; it is not authentication, and the rate limit still applies.)
+
 One-time auth (either works):
 
 ```sh
