@@ -38,6 +38,43 @@ export const demoSchema = defineGenUiSchema({
       props: { tone: "string" },
       description: 'A highlighted note. tone: "info" | "warning".',
     },
+    // Forms: the model asks for input through these components, never raw
+    // HTML. Their descriptions tell it the HTML semantics (what the action
+    // reports), which is the app's responsibility.
+    Form: {
+      props: { onSubmit: "function", submitLabel: "string" },
+      description:
+        "A form (an HTML <form>) ending in a submit button labeled submitLabel. Wire " +
+        "onSubmit to an action: on submit, that action reports the value of every " +
+        "TextField / Select inside the form, by its name. Use it whenever you need the " +
+        "user to type or pick something.",
+    },
+    TextField: {
+      props: {
+        name: "string",
+        label: "string",
+        placeholder: "string",
+        defaultValue: "string",
+        multiline: "boolean",
+        required: "boolean",
+      },
+      description:
+        "A labeled text input (an HTML <input>, or a <textarea> with multiline). Only " +
+        "inside a Form; its value is reported under name when the form is submitted. " +
+        "required: the form can't be submitted while it is empty.",
+    },
+    Select: {
+      props: { name: "string", label: "string", defaultValue: "string" },
+      description:
+        "A labeled dropdown (an HTML <select>) whose children are Option elements. Only " +
+        "inside a Form; the chosen Option's value is reported under name when the form " +
+        "is submitted.",
+    },
+    Option: {
+      props: { value: "string" },
+      description:
+        "One choice of a Select: value is what gets reported; its children are the label.",
+    },
   },
   actions: {
     addToCart: { description: "Add the product shown in the UI to the user's cart." },

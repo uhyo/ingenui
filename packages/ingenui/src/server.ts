@@ -37,8 +37,8 @@ export type {
 export { formatGenUiPrompt } from "./prompt";
 export type { GenUiPromptOptions } from "./prompt";
 
-export { formatActionMessage } from "./actions";
-export type { ActionDefinition, ResolvedAction } from "./actions";
+export { formatActionMessage, normalizeActionData } from "./actions";
+export type { ActionData, ActionDefinition, ResolvedAction } from "./actions";
 
 export { formatIssueReport } from "./issues";
 export type { GenUiIssue, IssueListener } from "./issues";
@@ -57,7 +57,15 @@ export type {
  * the action with its canonical next-request `message`, or `null` when the
  * model could not have wired such an action — undeclared with
  * `dynamicActions: false`, or not a valid `actions.<name>` member.
+ *
+ * `data` is the values the client reports with the action
+ * (`ActionEvent.data`): untrusted, normalized with `normalizeActionData`
+ * (invalid entries dropped, long values cut), and listed in the `message`.
  */
-export function resolveGenUiAction(schema: GenUiSchema, name: string): ResolvedAction | null {
-  return resolveAction(schema, name);
+export function resolveGenUiAction(
+  schema: GenUiSchema,
+  name: string,
+  data?: unknown,
+): ResolvedAction | null {
+  return resolveAction(schema, name, data);
 }

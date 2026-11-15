@@ -126,6 +126,8 @@ export interface NextTurnInput {
   text?: string;
   /** The fired action's name (`ActionEvent.name`), if any. */
   action?: string;
+  /** The values it reported (`ActionEvent.data`): what the user entered. */
+  data?: Readonly<Record<string, string | readonly string[]>>;
   /** Render crashes — the one kind of issue only the client can observe. */
   renderErrors?: { blockIndex: number; message: string }[];
 }

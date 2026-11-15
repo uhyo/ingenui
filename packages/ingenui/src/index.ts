@@ -30,8 +30,14 @@ export type { ComponentDefinition, GenUiSchema } from "./schema";
 export { formatGenUiPrompt } from "./prompt";
 export type { GenUiPromptOptions } from "./prompt";
 
-export { createActionsVariable, formatActionMessage } from "./actions";
+export {
+  createActionsVariable,
+  extractActionData,
+  formatActionMessage,
+  normalizeActionData,
+} from "./actions";
 export type {
+  ActionData,
   ActionDefinition,
   ActionEvent,
   ActionHandler,

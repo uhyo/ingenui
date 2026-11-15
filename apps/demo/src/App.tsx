@@ -488,12 +488,14 @@ function GenUiStreamView({ params }: { params: RunParams }) {
     ...genUi,
     Pending: Shimmer,
     onUnknownComponent: "pending",
-    // The client reports only the action's *name*; the server resolves it
-    // against the schema and writes the next request itself.
+    // The client reports only the action's *name* and the values it
+    // reported (what the user entered); the server resolves them against
+    // the schema and writes the next request itself.
     onAction: (event) => {
       fetchNextTurn({
         message: streamedRef.current,
         action: event.name,
+        ...(event.data !== undefined && { data: event.data }),
         renderErrors: renderErrorsRef.current,
       }).then(
         (text) => log(text ?? ""),

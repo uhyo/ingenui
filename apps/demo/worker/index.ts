@@ -78,7 +78,7 @@ const MAX_CONVERSATION_LENGTH = 100_000;
 
 const systemPrompt = `You are the shopping assistant of a demo store that showcases a Generative UI framework. The store is fictional: invent plausible products, prices, and details as needed, and keep them consistent within the conversation.
 
-Answer in Markdown; use UI blocks where they help (product cards, comparisons, order summaries, choices), and wire buttons to actions. Keep replies short: a sentence or two of prose around one or two UI blocks.
+Answer in Markdown; use UI blocks where they help (product cards, comparisons, order summaries, choices), and wire buttons to actions. When you need details from the user (an address, a size, a question about a product), ask with a Form. Keep replies short: a sentence or two of prose around one or two UI blocks.
 
 ${formatGenUiPrompt(demoSchema)}`;
 
@@ -303,7 +303,8 @@ function describe(issue: GenUiIssue): string {
 
 /**
  * The next user turn, composed on the server: what the user typed, or the
- * canonical message for the fired action (resolved against the schema), plus
+ * canonical message for the fired action and its reported values (resolved
+ * against the schema), plus
  * the feedback report —
  * parse-time issues from the server's own validation, and the render crashes
  * only the client can observe.
@@ -323,7 +324,10 @@ async function next(request: Request): Promise<Response> {
   }
   const action = body?.["action"];
   if (action !== undefined) {
-    const resolved = typeof action === "string" ? resolveGenUiAction(demoSchema, action) : null;
+    // The reported values (what the user entered) are untrusted:
+    // `resolveGenUiAction` normalizes them into the message.
+    const resolved =
+      typeof action === "string" ? resolveGenUiAction(demoSchema, action, body?.["data"]) : null;
     if (resolved === null) return json({ error: "unknown action" }, 400);
     parts.push(resolved.message);
   }

@@ -179,6 +179,55 @@ describe("createGenUiMessage — actions", () => {
   });
 });
 
+describe("createGenUiMessage — action values", () => {
+  it("reports what the user entered in host-supplied form components", async () => {
+    // Host components: the model never writes <form>/<input> itself.
+    function SubscribeForm({
+      onSubmit,
+      children,
+    }: {
+      onSubmit?: () => void;
+      children?: ReactNode;
+    }) {
+      return (
+        <form onSubmit={onSubmit}>
+          {children}
+          <button type="submit">Subscribe</button>
+        </form>
+      );
+    }
+    function EmailField({ name }: { name?: string }) {
+      return <input aria-label="email" name={name} />;
+    }
+    const fired: [string, unknown, string][] = [];
+    const message = createGenUiMessage(
+      iterableFrom([
+        '```ui+jsx\n<SubscribeForm onSubmit={actions.subscribe}><EmailField name="email" />',
+        "</SubscribeForm>\n```\n",
+      ]),
+      {
+        components: { SubscribeForm, EmailField },
+        onAction: (event) => fired.push([event.name, event.data, event.message]),
+      },
+    );
+    await message.done;
+    expect(message.getIssues()).toEqual([]);
+
+    const { getByLabelText, getByRole } = render(<>{message.getSnapshot()}</>);
+    (getByLabelText("email") as HTMLInputElement).value = "ada@example.com";
+    act(() => getByRole("button").click());
+
+    expect(fired).toEqual([
+      [
+        "subscribe",
+        { email: "ada@example.com" },
+        "The `actions.subscribe` action was fired by the user with these values:\n" +
+          '- email: "ada@example.com"',
+      ],
+    ]);
+  });
+});
+
 describe("createGenUiMessage — issues", () => {
   it("collects parser errors per block with block indices", async () => {
     const message = createGenUiMessage(

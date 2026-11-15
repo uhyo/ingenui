@@ -402,11 +402,11 @@ client input, not from text the client sends:
 ```ts
 import { formatIssueReport, resolveGenUiAction, validateGenUiMessage } from "ingenui/server";
 
-// The client sends { action: event.name, renderErrors: [{ blockIndex, message }] }
-function nextUserTurn(previousMessage: string, action: string | undefined, renderErrors) {
+// The client sends { action: event.name, data: event.data, renderErrors: [{ blockIndex, message }] }
+function nextUserTurn(previousMessage: string, action: string | undefined, data, renderErrors) {
   const parts: string[] = [];
   if (action !== undefined) {
-    const resolved = resolveGenUiAction(schema, action); // null: not an action the model could wire
+    const resolved = resolveGenUiAction(schema, action, data); // null: not an action the model could wire
     if (resolved === null) throw new BadRequest();
     parts.push(resolved.message); // "The `actions.subscribe` action was fired by the user."
   }
@@ -419,13 +419,16 @@ function nextUserTurn(previousMessage: string, action: string | undefined, rende
 }
 ```
 
-`resolveGenUiAction(schema, name)` accepts:
+`resolveGenUiAction(schema, name, data?)` accepts:
 
 - declared actions;
 - with dynamic actions, any valid `actions.<name>` member.
 
 It rejects non-identifiers, `__proto__` / `constructor` / `prototype`, and
-inherited `Object.prototype` names such as `toString`.
+inherited `Object.prototype` names such as `toString`. The optional `data`
+(the client's `event.data`: [what the user entered](./actions.md#action-values))
+is normalized with `normalizeActionData` — invalid entries dropped, long
+values cut — and listed in the `message`.
 
 ## Sharing the schema
 

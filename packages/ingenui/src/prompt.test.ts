@@ -45,9 +45,20 @@ describe("formatGenUiPrompt — Actions section", () => {
     expect(prompt).toContain('"The `actions.submit` action was fired by the user."');
   });
 
-  it("tells the model an action carries no data, so each choice needs its own action", () => {
+  it("tells the model that components may report values with an action", () => {
+    const prompt = formatGenUiPrompt({ actions: { subscribe: true } });
+    expect(prompt).toContain("Some components also report values with the action");
+    expect(prompt).toContain(
+      '"The `actions.subscribe` action was fired by the user with these values:\n' +
+        '  - fieldName: "what the user entered""',
+    );
+    // The prompt itself never suggests raw HTML forms: components say so.
+    expect(prompt).not.toMatch(/<form|<input/);
+  });
+
+  it("tells the model the message doesn't say which element fired it, so each choice needs its own action", () => {
     const prompt = formatGenUiPrompt();
-    expect(prompt).toContain("not which element\n  fired it");
+    expect(prompt).toContain("does not say which element fired it");
     expect(prompt).toContain("give every distinct choice its own action");
     expect(prompt).toContain("Never wire one action to several elements");
     expect(prompt).toContain("actions.addToCartBlueMug, actions.addToCartRedMug");
@@ -58,7 +69,7 @@ describe("formatGenUiPrompt — Actions section", () => {
     expect(prompt).toContain("- Available actions: `actions.submit`.");
     expect(prompt).not.toContain("define your own actions");
     // Still warned against reusing an action, without suggesting invented names.
-    expect(prompt).toContain("not which element\n  fired it");
+    expect(prompt).toContain("does not say which element fired it");
     expect(prompt).toContain("never wire one action to several elements");
     expect(prompt).not.toContain("actions.addToCartBlueMug");
   });
