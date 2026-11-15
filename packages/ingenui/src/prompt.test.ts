@@ -45,10 +45,22 @@ describe("formatGenUiPrompt — Actions section", () => {
     expect(prompt).toContain('"The `actions.submit` action was fired by the user."');
   });
 
+  it("tells the model an action carries no data, so each choice needs its own action", () => {
+    const prompt = formatGenUiPrompt();
+    expect(prompt).toContain("not which element\n  fired it");
+    expect(prompt).toContain("give every distinct choice its own action");
+    expect(prompt).toContain("Never wire one action to several elements");
+    expect(prompt).toContain("actions.addToCartBlueMug, actions.addToCartRedMug");
+  });
+
   it("omits self-defined actions when opted out", () => {
     const prompt = formatGenUiPrompt({ actions: { submit: true }, dynamicActions: false });
     expect(prompt).toContain("- Available actions: `actions.submit`.");
     expect(prompt).not.toContain("define your own actions");
+    // Still warned against reusing an action, without suggesting invented names.
+    expect(prompt).toContain("not which element\n  fired it");
+    expect(prompt).toContain("never wire one action to several elements");
+    expect(prompt).not.toContain("actions.addToCartBlueMug");
   });
 
   it("omits the Actions section entirely when opted out with no declared actions", () => {

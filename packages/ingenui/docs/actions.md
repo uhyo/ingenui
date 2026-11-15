@@ -53,7 +53,12 @@ never runs host code, so apps switching on `event.name` should treat unknown
 names as pass-through-to-the-model.
 
 `formatGenUiPrompt` follows the same default and tells the model it may
-invent action names.
+invent action names. Because a fired action reports only its name — not
+which element fired it, nor anything the user entered — the prompt also
+tells the model to give every distinct choice its own action
+(`actions.addToCartBlueMug`, `actions.addToCartRedMug`, … rather than
+`actions.addToCart` on every item). With `dynamicActions: false` it still
+warns against wiring one action to elements that mean different things.
 
 ## Opting out
 

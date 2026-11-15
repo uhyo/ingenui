@@ -97,7 +97,22 @@ export function formatGenUiPrompt(options: GenUiPromptOptions | GenUiSchema = {}
       `- Pass one wherever a function prop is expected: onClick={actions.${example}}.`,
       "- When the user triggers one, the next user message reports it, e.g.:",
       `  "The \`actions.${example}\` action was fired by the user."`,
+      "- That message is all you get: it names the action, but not which element",
+      "  fired it, nor any value the user entered or selected in the UI.",
     );
+    if (dynamic) {
+      lines.push(
+        "- So give every distinct choice its own action, with the choice in its name.",
+        "  Never wire one action to several elements that mean different things: for",
+        "  a list of products, write actions.addToCartBlueMug, actions.addToCartRedMug, …",
+        "  rather than actions.addToCart on every item.",
+      );
+    } else {
+      lines.push(
+        "- So never wire one action to several elements that mean different things;",
+        "  use an action only where its name alone says what the user chose.",
+      );
+    }
   }
 
   lines.push("", "## UI contract", formatPromptContract(withActionsVariable(options)));
