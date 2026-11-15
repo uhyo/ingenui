@@ -32,6 +32,24 @@ describe("resolveGenUiAction", () => {
     }
   });
 
+  it("normalizes the client's values into the data and the message", () => {
+    expect(
+      resolveGenUiAction(schema, "submit", { email: "ada@example.com", "bad key": "x", n: {} }),
+    ).toEqual({
+      name: "submit",
+      reference: "actions.submit",
+      message:
+        "The `actions.submit` action was fired by the user with these values:\n" +
+        '- email: "ada@example.com"',
+      data: { email: "ada@example.com" },
+      declared: true,
+    });
+    // Malformed values are dropped, not trusted.
+    expect(resolveGenUiAction(schema, "submit", "email=x")).toEqual(
+      resolveGenUiAction(schema, "submit"),
+    );
+  });
+
   it("rejects undeclared actions with dynamicActions: false", () => {
     const strict = defineGenUiSchema({ ...schema, dynamicActions: false });
     expect(resolveGenUiAction(strict, "submit")).not.toBeNull();

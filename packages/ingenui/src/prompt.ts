@@ -97,8 +97,12 @@ export function formatGenUiPrompt(options: GenUiPromptOptions | GenUiSchema = {}
       `- Pass one wherever a function prop is expected: onClick={actions.${example}}.`,
       "- When the user triggers one, the next user message reports it, e.g.:",
       `  "The \`actions.${example}\` action was fired by the user."`,
-      "- That message is all you get: it names the action, but not which element",
-      "  fired it, nor any value the user entered or selected in the UI.",
+      "- Some components also report values with the action, as their descriptions",
+      "  say (e.g. what the user typed or selected); the message then lists them:",
+      `  "The \`actions.${example}\` action was fired by the user with these values:`,
+      '  - fieldName: "what the user entered""',
+      "- That message is all you get: it names the action and lists those values,",
+      "  but does not say which element fired it.",
     );
     if (dynamic) {
       lines.push(

@@ -161,6 +161,32 @@ any host-side declaration:
 `,
   },
   {
+    id: "shipping-form",
+    label: "Shipping form (action values)",
+    source: `## Where should we ship it?
+
+Fill this in and I'll show you the delivery options. The form and its
+fields are **app-supplied components**; on submit, the action reports what
+you entered:
+
+\`\`\`ui+jsx
+<Card>
+  <Form onSubmit={actions.submitShippingDetails} submitLabel="Continue">
+    <TextField name="fullName" label="Full name" placeholder="Ada Lovelace" required={true} />
+    <TextField name="address" label="Address" multiline={true} required={true} />
+    <Select name="speed" label="Delivery speed" defaultValue="standard">
+      <Option value="standard">Standard (3–5 days)</Option>
+      <Option value="express">Express (next day)</Option>
+    </Select>
+  </Form>
+</Card>
+\`\`\`
+
+> The values travel as structured data; the server normalizes them and
+> writes the "Next request to the AI" below.
+`,
+  },
+  {
     id: "code-vs-ui",
     label: "Code fence vs UI fence",
     source: `Only a fence whose info string is exactly \`ui+jsx\` renders as UI.

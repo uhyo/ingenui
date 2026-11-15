@@ -46,7 +46,7 @@ They are forwarded to every `ui+jsx` block's parser. In addition:
 | ---------------- | ------------------------------------- | ----------- |
 | `actions`        | `Record<string, ActionHandler \| true \| { description? }>` | The actions the model may use; exposed as the predefined variable `actions`, each entry typed `"function"`. `true` (or a `{ description }` for the prompt) declares an action with no local handler. See [the `actions` convention](./actions.md). |
 | `dynamicActions` | `boolean`                             | Let the model define its own actions by referencing them: any `actions.<name>` resolves; undeclared names are notify-only (`declared: false`). **Default `true`** — pass `false` to keep the action vocabulary host-owned. |
-| `onAction`       | `(event: ActionEvent) => void`        | Fired when the user triggers an action. `event.message` is the canonical next-request text; `event.declared` distinguishes host-declared from model-defined actions. |
+| `onAction`       | `(event: ActionEvent) => void`        | Fired when the user triggers an action. `event.message` is the canonical next-request text; `event.data` holds the [values](./actions.md#action-values) the user entered, if the component reported any; `event.declared` distinguishes host-declared from model-defined actions. |
 | `onIssue`        | `(issue: GenUiIssue) => void`         | Fired for every issue as it is found (issues also accumulate on the message). See [issues](./issues.md). |
 | `renderMarkdown` | `(markdown: string, context: { streaming: boolean }) => ReactNode` | Replace the built-in [Markdown renderer](./markdown.md). `streaming` is `true` while the region holds the stream's frontier. |
 | `wrapUiBlock`    | `(props: UiBlockWrapperProps) => ReactNode` | Wraps each block's rendering, e.g. to collapse or grey out a block with issues, or to show a fallback for a crashed one. See [wrapping UI blocks](./issues.md#wrapping-ui-blocks). |
@@ -159,8 +159,9 @@ The React-free server side. See [server and client](./server.md#the-server--inge
 | `formatContinuationMessage(text, issueReport)` | The user message asking the model to continue an interrupted response after `text`, with the issue report. |
 | `createGenUiValidator(schema, { onIssue? })` | A push-based validator (`write`, `end`, `getIssues`, `getIssueReport`, `getCleanOffset`, `getFenceClose`). |
 | `validateGenUiMessage(text, schema)` | Validates a complete message and returns its issues. |
-| `resolveGenUiAction(schema, name)` | Resolves an action name sent by the client to `{ name, reference, message, declared }`, or `null` if the model could not have wired it. |
-| `formatIssueReport(issues)` / `formatActionMessage(name)` / `formatJsxError(event)` | Feedback formatting, as on the client. |
+| `resolveGenUiAction(schema, name, data?)` | Resolves an action name (and the [values](./actions.md#action-values) reported with it) sent by the client to `{ name, reference, message, data?, declared }`, or `null` if the model could not have wired it. |
+| `normalizeActionData(input)` | Normalizes untrusted action values (as `resolveGenUiAction` does). |
+| `formatIssueReport(issues)` / `formatActionMessage(name, data?)` / `formatJsxError(event)` | Feedback formatting, as on the client. |
 
 For the same text and schema, the server reports exactly the `jsx-error` and
 `unclosed-fence` issues the client does. `render-error` issues are

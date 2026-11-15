@@ -30,7 +30,8 @@ Let me know if you have questions!
 - **Interactive via `actions`** — the model wires `onClick={actions.submit}`;
   when the user clicks, you get the canonical next request for the model
   (``The `actions.submit` action was fired by the user.``). The model can even
-  invent its own action names — the name is the definition.
+  invent its own action names — the name is the definition — and your form
+  components can report what the user entered along with the action.
 - **Self-correcting** — parse errors, render crashes, and unclosed fences are
   collected as issues and formatted into a feedback report for the model.
 - **Errors never blank the message** — each UI block sits in its own error

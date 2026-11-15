@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGenUiMessage } from "ingenui/react";
 
-import type { ChatMessage, Recovery } from "./api";
+import type { ChatMessage, NextTurnInput, Recovery } from "./api";
 import { fetchClaudeConfig, fetchNextTurn, streamChat } from "./api";
 import { genUi, Shimmer } from "./components";
 import { issueLabel, UiBlockFrame } from "./ui-block-frame";
@@ -47,6 +47,19 @@ interface Reply {
   renderErrors: RenderError[];
 }
 
+/** A fired action, as sent to the server: its name and the values it reported. */
+type ActionRequest = Pick<NextTurnInput, "data"> & { action: string };
+type ChatRequest = { text: string } | ActionRequest;
+
+/** How a fired action shows in the chat, e.g. "Submitted actions.subscribe (email: …)". */
+function actionLabel({ action, data }: ActionRequest): string {
+  if (data === undefined) return `Clicked actions.${action}`;
+  const values = Object.entries(data).map(
+    ([key, value]) => `${key}: ${typeof value === "string" ? value : value.join(", ")}`,
+  );
+  return `Sent actions.${action} (${values.join("; ")})`;
+}
+
 export function ClaudeChat({ recovery, onNewChat }: { recovery: Recovery; onNewChat: () => void }) {
   const [config, setConfig] = useState<{ available: boolean; model: string } | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -58,9 +71,7 @@ export function ClaudeChat({ recovery, onNewChat }: { recovery: Recovery; onNewC
   // Read at call time: a reply's `onAction` is fixed when its message is
   // created, and two clicks can land before a re-render.
   const busyRef = useRef(false);
-  const sendRef = useRef<(request: { text: string } | { action: string }) => Promise<void>>(
-    async () => {},
-  );
+  const sendRef = useRef<(request: ChatRequest) => Promise<void>>(async () => {});
 
   useEffect(() => {
     fetchClaudeConfig().then(setConfig, (err: unknown) => setError(String(err)));
@@ -81,7 +92,7 @@ export function ClaudeChat({ recovery, onNewChat }: { recovery: Recovery; onNewC
     setBusy(value);
   };
 
-  const send = async (request: { text: string } | { action: string }) => {
+  const send = async (request: ChatRequest) => {
     if (busyRef.current) return;
     setBusyBoth(true);
     setError(null);
@@ -98,7 +109,7 @@ export function ClaudeChat({ recovery, onNewChat }: { recovery: Recovery; onNewC
         setBusyBoth(false);
         return;
       }
-      const label = "text" in request ? request.text : `Clicked actions.${request.action}`;
+      const label = "text" in request ? request.text : actionLabel(request);
       const user: Turn = { id: nextId.current++, role: "user", label, content };
       const history = [...conversation(), { role: "user" as const, content }];
       setTurns((prev) => [
@@ -171,7 +182,7 @@ export function ClaudeChat({ recovery, onNewChat }: { recovery: Recovery; onNewC
               key={turn.id}
               history={turn.history}
               recovery={turn.recovery}
-              onAction={(name) => void sendRef.current({ action: name })}
+              onAction={(action) => void sendRef.current(action)}
               onSettled={(reply) => settle(turn.id, reply)}
             />
           ),
@@ -231,7 +242,7 @@ function AssistantReply({
 }: {
   history: ChatMessage[];
   recovery: Recovery;
-  onAction: (name: string) => void;
+  onAction: (action: ActionRequest) => void;
   onSettled: (reply: Reply) => void;
 }) {
   const [streamed, setStreamed] = useState("");
@@ -257,7 +268,10 @@ function AssistantReply({
     ...genUi,
     Pending: Shimmer,
     onUnknownComponent: "pending",
-    onAction: (event) => onAction(event.name),
+    // Only the name and the reported values go to the server, which
+    // writes the message itself.
+    onAction: (event) =>
+      onAction({ action: event.name, ...(event.data !== undefined && { data: event.data }) }),
     onIssue: (issue) => {
       if (issue.kind === "render-error") {
         renderErrors.current.push({

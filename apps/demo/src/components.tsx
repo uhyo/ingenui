@@ -6,7 +6,7 @@
  * anything else degrades to the `<Pending />` frontier instead of rendering.
  */
 import { createContext, useContext } from "react";
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, FormEvent, ReactNode } from "react";
 import { useIsElementComplete } from "@ingenui/incremental-jsx-parser/react";
 import { bindGenUi } from "ingenui";
 
@@ -121,6 +121,86 @@ function Callout({ tone = "info", children }: WithChildren & { tone?: string }) 
   return <div className={`ui-callout ui-callout--${tone}`}>{children}</div>;
 }
 
+function Form({
+  onSubmit,
+  submitLabel = "Submit",
+  children,
+}: WithChildren & {
+  onSubmit?: (event: FormEvent<HTMLFormElement>) => void;
+  submitLabel?: string;
+}) {
+  // The submit event is forwarded as-is: the `actions.*` function it reaches
+  // reads the form's fields from it (and prevents the navigation). The
+  // fields are uncontrolled, so what the user types survives re-renders
+  // while the message is still streaming.
+  // Submittable only once all its fields have arrived.
+  const complete = useIsElementComplete();
+  return (
+    <form
+      className="ui-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (complete) onSubmit?.(event);
+      }}
+    >
+      {children}
+      <button
+        className="ui-button ui-button--primary"
+        type="submit"
+        disabled={!complete}
+        aria-busy={!complete}
+      >
+        {submitLabel}
+      </button>
+    </form>
+  );
+}
+
+function TextField({
+  name,
+  label,
+  placeholder,
+  defaultValue,
+  multiline = false,
+  required = false,
+}: {
+  name?: string;
+  label?: string;
+  placeholder?: string;
+  defaultValue?: string;
+  multiline?: boolean;
+  required?: boolean;
+}) {
+  const props = { className: "ui-field__control", name, placeholder, defaultValue, required };
+  return (
+    <label className="ui-field">
+      <span className="ui-field__label">{label}</span>
+      {multiline ? <textarea rows={3} {...props} /> : <input type="text" {...props} />}
+    </label>
+  );
+}
+
+function Select({
+  name,
+  label,
+  defaultValue,
+  children,
+}: WithChildren & { name?: string; label?: string; defaultValue?: string }) {
+  return (
+    <label className="ui-field">
+      <span className="ui-field__label">{label}</span>
+      <select className="ui-field__control" name={name} defaultValue={defaultValue}>
+        {/* No shimmer inside a <select>: only <option>s are valid there. */}
+        <HidePendingContext value>{children}</HidePendingContext>
+      </select>
+    </label>
+  );
+}
+
+function Option({ value, children }: WithChildren & { value?: string }) {
+  return <option value={value}>{children}</option>;
+}
+
 const implementations = {
   Card,
   CardHeader,
@@ -135,6 +215,10 @@ const implementations = {
   List,
   Item,
   Callout,
+  Form,
+  TextField,
+  Select,
+  Option,
 };
 
 /**

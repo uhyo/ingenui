@@ -804,6 +804,34 @@ code {
   opacity: 0.6;
 }
 
+.ui-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ui-field__label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.ui-field__control {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
 .ui-avatar {
   display: inline-flex;
   align-items: center;
