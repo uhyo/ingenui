@@ -13,7 +13,8 @@ import type { ActionsDefinition } from "./actions";
 import { withActionsVariable } from "./actions";
 import type { GenUiSchema } from "./schema";
 
-export interface GenUiPromptOptions extends PromptContractOptions {
+// `standalone` is not an option here: the JSX always sits inside ui+jsx fences.
+export interface GenUiPromptOptions extends Omit<PromptContractOptions, "standalone"> {
   /**
    * The actions available to the model (same value as
    * `GenUiMessageOptions.actions`). Described in the prompt and merged into
@@ -119,7 +120,13 @@ export function formatGenUiPrompt(options: GenUiPromptOptions | GenUiSchema = {}
     }
   }
 
-  lines.push("", "## UI contract", formatPromptContract(withActionsVariable(options)));
+  // The contract only governs a block's contents; the fences and the prose
+  // around them are the message format above.
+  lines.push(
+    "",
+    "## UI contract",
+    formatPromptContract({ ...withActionsVariable(options), standalone: false }),
+  );
 
   return lines.join("\n");
 }

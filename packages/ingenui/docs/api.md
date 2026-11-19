@@ -99,7 +99,9 @@ Builds the section of the generating model's system prompt that describes
 the message format: how to open a `ui+jsx` fence, which actions exist (and,
 unless `dynamicActions: false`, that it may invent action names), plus the
 parser's `formatPromptContract` — the exact JSX subset, allowed
-elements/components/props with their types, and predefined variables. Pass
+elements/components/props with their types, and predefined variables (in
+its embedded form, `standalone: false`, so it governs only what goes inside
+a block and never contradicts the Markdown format around it). Pass
 it a [`GenUiSchema`](#definegenuischemaschema--ingenuischema) (the usual
 server-side call, also exported from `ingenui/server`), or the same schema
 options you pass to `createGenUiMessage`. Component and action

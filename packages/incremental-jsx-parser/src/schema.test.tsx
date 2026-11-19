@@ -384,6 +384,21 @@ describe("component prop enforcement end to end", () => {
 });
 
 describe("formatPromptContract", () => {
+  it("forbids prose and fences around the JSX by default (the JSX is the whole output)", () => {
+    const contract = formatPromptContract({ components: { Card: () => null } });
+    expect(contract).toContain("Output raw JSX only — no prose, no markdown code fences");
+  });
+
+  it("only constrains a block's contents when the JSX is embedded (standalone: false)", () => {
+    const contract = formatPromptContract({ components: { Card: () => null }, standalone: false });
+    expect(contract).not.toContain("Output raw JSX only");
+    expect(contract).not.toContain("no prose");
+    expect(contract).toContain("Inside a UI block, write only JSX — no nested code fences");
+    // The rest of the contract is unchanged.
+    expect(contract).toContain("- <Card>");
+    expect(contract).toContain("## Syntax");
+  });
+
   it("describes the configured elements, components, and variables", () => {
     const contract = formatPromptContract({
       elements: { div: true, a: ["href", "title"] },
