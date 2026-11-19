@@ -136,6 +136,17 @@ const parser = createIncrementalJsxParser(stream, {
 });
 ```
 
+By default the contract assumes the JSX is the model's **whole output** and
+tells it to write no prose or code fences around it. When the JSX is
+embedded in a larger format that your own prompt describes (for example
+inside fenced blocks of a Markdown message, as ingenui does), pass
+`standalone: false`: the contract then only constrains what goes inside a
+block.
+
+```ts
+const contract = formatPromptContract({ ...schema, standalone: false });
+```
+
 Together with `onJsxError` + `formatJsxError` this closes the loop: the
 contract tells the model what it may emit, and the events tell it what it
 got wrong.

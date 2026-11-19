@@ -15,6 +15,13 @@ describe("formatGenUiPrompt", () => {
     expect(prompt).toContain("- <a> — allowed props: href (URL string)");
   });
 
+  it("doesn't tell the model to drop the prose and fences its message format asks for", () => {
+    const prompt = formatGenUiPrompt({ components: { Card: true } });
+    expect(prompt).not.toContain("Output raw JSX only");
+    expect(prompt).not.toContain("no markdown code fences");
+    expect(prompt).toContain("Inside a UI block, write only JSX");
+  });
+
   it("declares the actions variable alongside user variables in the contract", () => {
     const prompt = formatGenUiPrompt({
       actions: { submit: true },
