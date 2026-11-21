@@ -1,5 +1,15 @@
 # ingenui
 
+## 0.0.3
+
+### Patch Changes
+
+- d929217: Actions can now report what the user entered. When an action is called with a form's submit event (its fields, via `FormData`, including the submitter), a click on a named `<button>` (its `name` / `value`), or a plain data object, the values appear as `ActionEvent.data` and the canonical message lists them ("… was fired by the user with these values:" followed by JSON-quoted `- name: "value"` lines). The submission's navigation is prevented. `resolveGenUiAction(schema, name, data?)` normalizes the client's values the same way on the server (new `normalizeActionData`; `extractActionData` is exported too). The prompt tells the model that some components report values, as their descriptions say; it never suggests raw HTML forms. Supply form and control components and describe their semantics.
+- 991be64: `formatGenUiPrompt` now tells the model that a fired action reports only its name, so every distinct choice needs its own action (e.g. `actions.addToCartBlueMug` / `actions.addToCartRedMug` instead of `actions.addToCart` on every item).
+- fd8d80a: The prompt contract no longer contradicts ingenui's message format. `formatPromptContract` takes a new `standalone` option (default `true`, unchanged output: the JSX is the model's whole output, with no prose or code fences around it). With `standalone: false` the contract only constrains what goes inside a UI block ("Inside a UI block, write only JSX — no nested code fences, no imports, no statements."). `formatGenUiPrompt` now uses that embedded form: its "UI contract" section used to say "Output raw JSX only — no prose, no markdown code fences", against the Markdown + `ui+jsx` fence format it describes just above.
+- Updated dependencies [fd8d80a]
+  - @ingenui/incremental-jsx-parser@0.0.3
+
 ## 0.0.2
 
 ### Patch Changes
