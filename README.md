@@ -6,7 +6,7 @@
 </picture>
 
 ````markdown
-**You're right.** LLMs shouldn't be forced to use those silly JSON stream formats for UI — they could just output JSX, which they are already familiar with.
+**You're right.** LLMs don't need to learn a custom JSON stream format to build UI — they can just write JSX, which they already know well.
 
 Would you like me to migrate your project to use JSX for UI streams? Answer using the below UI:
 
